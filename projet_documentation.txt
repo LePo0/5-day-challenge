@@ -1,0 +1,118 @@
+CONFIDENTIAL
+Document Complémentaire : Stack
+Technique & Consignes
+Version : 4 Jours | Périmètre : National (SIRENE + RNA + BAN)
+1. Objectif & Périmètre
+L'objectif est de construire un référentiel unifié des organisations en France en
+croisant trois sources officielles.
+• SIRENE (INSEE) : Entreprises & établissements (Stock + Historique).
+• RNA (Ministère de l'Intérieur) : Associations loi 1901 (Fichier rna_waldec).
+• BAN (IGN) : Référentiel national des adresses.
+Rappel : Les formats JSON de l'API, les seuils de performance et le protocole de
+stress-test (500 requêtes) décrits dans le sujet principal doivent être strictement
+respectés.
+2. La Stack Technique Imposée
+Pour réussir ce challenge en 4 jours, l'architecture suivante est fortement
+recommandée (voire imposée).
+Composant Technologie Justification
+Langage Python 3.10+ Standard actuel.
+Format
+Données Parquet Obligatoire pour les données brutes et nettoyées
+(compression, lecture rapide).
+Moteur SQL DuckDB
+Pour effectuer les jointures et agrégations SQL
+directement sur les fichiers Parquet (sans charger
+en RAM).
+Recherche
+Texte SQLite + FTS5 Indexation texte performante et légère pour
+l'endpoint /search.
+API FastAPI +
+Uvicorn Performance asynchrone pour servir le JSON.
+Orchestration Makefile Pour standardiser les commandes (ingest, clean,
+run).
+⛔ Interdit : Toute API externe de géocodage ou d'enrichissement. Vous devez
+travailler en local avec SIRENE, RNA et BAN uniquement.
+3. Arborescence de Projet (Référence)
+BashCONFIDENTIAL
+.
+├── data_raw/ # Archives .zip/.gz téléchargées (Ne pas commiter)
+├── data_parquet/ # Tables converties (Bronze/Silver/Gold)
+├── duckdb/ # Fichier catalog.db (optionnel, si persistance)
+├── api/ # Application FastAPI (routers, models)
+├── etl/ # Scripts Python : ingest, normalize, match, views
+├── tests/ # Tests unitaires + Scripts de vérification JSON
+├── Makefile # Orchestrateur (voir section 8)
+└── README.md # Documentation
+4. Pipeline de Données (Data Engineering)
+4.1 Ingestion & Conversion
+1. Téléchargement : Récupérer les fichiers bruts (SIRENE Stock, RNA Waldec,
+BAN France entière).
+2. Conversion Immédiate : Décompresser et convertir les CSV en Parquet.
+o Conseil : Caster les types (int, string) dès cette étape pour réduire la
+taille.
+o Log : Conserver un journal d'ingestion (nombre de lignes, erreurs).
+4.2 Normalisation (Focus BAN)
+• Tokenisation : Séparer numero, type_voie, libelle, code_postal, commune.
+• Standardisation : Harmoniser les abréviations (ex: "Av." $\rightarrow$
+"AVENUE", "St" $\rightarrow$ "SAINT").
+• Validité : Vérifier la cohérence CP $\leftrightarrow$ Commune.
+4.3 Appariement (Matching SIRENE ↔ RNA)
+• Stratégie de Blocage : Ne comparer que si le code_postal est identique.
+• Fuzzy Matching : Comparer la raison sociale (SIRENE) et le titre (RNA).
+Générer un score de confiance [0-1].
+• Livrable Intermédiaire : Une table de liaison (Journal d'appariement)
+contenant : siret, id_rna, score, methode.
+⚠ Le Cas d'Or (Gold Case) :
+L'entité Croix-Rouge Française (SIRET 77567227200020) doit impérativement
+ressortir avec un ID RNA non nul et une adresse validée BAN. C'est le test de
+passage.
+5. Architecture des Vues & API
+Plutôt que de faire des calculs en temps réel, pré-calculez des vues optimisées :
+1. golden_record (Parquet/DuckDB) : Table finale plate. Clé unique : siret.
+Contient les infos fusionnées SIRENE + RNA + BAN. Sert l'endpoint
+/siret/{siret}.CONFIDENTIAL
+2. search_view (SQLite FTS5) : Table dédiée à la recherche textuelle. Contient
+uniquement : id, text_search_vector, postal_code. Sert l'endpoint /search.
+3. stats_view (Parquet) : Table pré-agrégée par code postal. Contient les totaux
+et les tops NAF. Sert l'endpoint /stats/{cp}.
+6. Performance & Objectifs (SLA)
+Le Stress-Test : 500 requêtes lancées en rafale.
+• Ping ICMP déduit du temps de réponse.
+• Bonus si réponse < 500ms.
+Cibles à viser (p95) :
+• /siret/{siret} : < 200 ms (Lecture simple clé/valeur).
+• /search : < 1 s (Grâce à l'index FTS5).
+• /stats/{cp} : < 500 ms (Lecture d'une ligne pré-calculée).
+7. Planning Type (Time-Boxing 4 Jours)
+• Jour 1 : Ingestion & Socle
+o Scripts de téléchargement et conversion CSV $\rightarrow$ Parquet.
+o Nettoyage et normalisation des adresses BAN.
+• Jour 2 : Le Matching
+o Algorithme de jointure SIRENE/RNA.
+o Création de la table golden_record et du journal d'appariement.
+• Jour 3 : API & Exposition
+o Développement FastAPI.
+o Implémentation de SQLite FTS5 pour la recherche.
+o Vérification stricte de la conformité JSON.
+• Jour 4 : Optimisation & Livraison
+o Création des index manquants.
+o Rédaction du rapport et du README.
+o Tests de charge locaux.
+8. Automation (Makefile)
+Votre projet doit être exécutable via ces commandes standardisées :
+Makefile
+ingest: # CSV -> Parquet (SIRENE, RNA, BAN)
+normalize: # Nettoyage adresses -> Tables Silver
+match: # Matching SIRENE/RNA -> Table de liens
+views: # Génération des vues finales (Golden, Search, Stats)
+api: # Lancement du serveur (uvicorn api.app:app --reload)
+eval: # Lancement des tests d'intégrité JSONCONFIDENTIAL
+9. Critères de Validation
+1. Conformité JSON : Les clés, types et nullables doivent être identiques à la
+spécification.
+2. Reproductibilité : Le projet doit s'installer (requirements.txt) et se lancer via
+make.
+3. Honnêteté Intellectuelle : L'usage d'IA pour coder est autorisé. L'usage
+d'API externes pour récupérer la donnée est interdit.
+4. Justesse : Les cas "Gold" (Croix-Rouge, mairies, etc.) font foi pour la note de
+correctness.
