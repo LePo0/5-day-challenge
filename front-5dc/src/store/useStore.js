@@ -11,6 +11,9 @@ const useStore = create((set) => ({
     searchType: null, // 'siret' | 'fuzzy' | 'stats'
     error: null,
 
+    // Mode mock pour les tests d'affichage
+    mockMode: false,
+
     // État du toaster
     toast: {
         open: false,
@@ -23,6 +26,7 @@ const useStore = create((set) => ({
     setLoading: (loading) => set({ loading }),
     setSearchType: (searchType) => set({ searchType }),
     setError: (error) => set({ error, results: null }),
+    toggleMockMode: () => set((state) => ({ mockMode: !state.mockMode })),
 
     // Actions toaster
     showToast: (type, children) => set({
