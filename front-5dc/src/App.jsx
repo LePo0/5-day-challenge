@@ -1,26 +1,11 @@
-import { useState } from 'react';
 import { ThemeProvider, CssBaseline, Box } from '@mui/material';
 import { darkTheme } from './theme';
 import Header from './components/Header';
 import SearchTabs from './components/SearchTabs';
 import ResultsArea from './components/ResultsArea';
+import Toaster from './components/Toaster';
 
 function App() {
-  const [results, setResults] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [searchType, setSearchType] = useState('siret');
-
-  const handleSearch = (type, data) => {
-    setSearchType(type);
-    setLoading(true);
-
-    // Simuler un appel API
-    setTimeout(() => {
-      setResults(data);
-      setLoading(false);
-    }, 800);
-  };
-
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
@@ -31,20 +16,19 @@ function App() {
           <Box sx={{ display: 'flex', gap: 3, height: '100%', width: '100%' }}>
             {/* Zone de recherche - 40% */}
             <Box sx={{ width: '40%', height: '100%', display: 'flex' }}>
-              <SearchTabs onSearch={handleSearch} />
+              <SearchTabs />
             </Box>
 
             {/* Zone de résultats - 60% */}
             <Box sx={{ width: '60%', height: '100%', display: 'flex' }}>
-              <ResultsArea
-                results={results}
-                loading={loading}
-                searchType={searchType}
-              />
+              <ResultsArea />
             </Box>
           </Box>
         </Box>
       </Box>
+
+      {/* Toaster global */}
+      <Toaster />
     </ThemeProvider>
   );
 }

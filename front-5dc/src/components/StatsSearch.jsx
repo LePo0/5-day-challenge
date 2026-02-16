@@ -1,17 +1,38 @@
 import { useState } from 'react';
 import { Box, TextField, Button, Typography } from '@mui/material';
 import { Analytics } from '@mui/icons-material';
+import useStore from '../store/useStore';
+import apiClient from '../api/apiClient';
 
 function StatsSearch() {
     const [postalCode, setPostalCode] = useState('');
+    const setResults = useStore((state) => state.setResults);
+    const setLoading = useStore((state) => state.setLoading);
+    const setSearchType = useStore((state) => state.setSearchType);
+    const setError = useStore((state) => state.setError);
+    const showToast = useStore((state) => state.showToast);
+    const loading = useStore((state) => state.loading);
 
     const handlePostalCodeChange = (e) => {
         const value = e.target.value.replace(/\D/g, '').slice(0, 5);
         setPostalCode(value);
     };
 
-    const handleSearch = () => {
-        console.log('Statistiques pour:', postalCode);
+    const handleSearch = async () => {
+        setSearchType('stats');
+        setLoading(true);
+        setError(null);
+
+        try {
+            const data = await apiClient.getStats(postalCode);
+            setResults(data);
+            showToast('success', `Statistiques récupérées pour le code postal ${postalCode}`);
+        } catch (error) {
+            setError(error.message);
+            showToast('error', `Erreur: ${error.message}`);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const isValid = postalCode.length === 5;
@@ -36,11 +57,11 @@ function StatsSearch() {
                 variant="contained"
                 size="large"
                 fullWidth
-                disabled={!isValid}
+                disabled={!isValid || loading}
                 onClick={handleSearch}
                 startIcon={<Analytics />}
             >
-                Voir les Statistiques
+                {loading ? 'Chargement...' : 'Voir les Statistiques'}
             </Button>
         </Box>
     );

@@ -5,7 +5,7 @@ import SiretSearch from './SiretSearch';
 import FuzzySearch from './FuzzySearch';
 import StatsSearch from './StatsSearch';
 
-function SearchTabs({ onSearch }) {
+function SearchTabs() {
     const [activeTab, setActiveTab] = useState(0);
 
     const handleTabChange = (event, newValue) => {
@@ -36,9 +36,9 @@ function SearchTabs({ onSearch }) {
             </Tabs>
 
             <Box sx={{ p: 4, flexGrow: 1, overflow: 'auto' }}>
-                {activeTab === 0 && <SiretSearch onSearch={onSearch} />}
-                {activeTab === 1 && <FuzzySearch onSearch={onSearch} />}
-                {activeTab === 2 && <StatsSearch onSearch={onSearch} />}
+                {activeTab === 0 && <SiretSearch />}
+                {activeTab === 1 && <FuzzySearch />}
+                {activeTab === 2 && <StatsSearch />}
             </Box>
         </Paper>
     );

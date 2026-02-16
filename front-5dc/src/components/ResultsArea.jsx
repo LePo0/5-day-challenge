@@ -1,7 +1,12 @@
-import { Box, Paper, Typography, CircularProgress, Card, CardContent, Grid, Divider, Chip } from '@mui/material';
+import { Box, Paper, Typography, CircularProgress, Card, CardContent, Grid, Divider, Chip, Alert } from '@mui/material';
 import { LocationOn, Business, Group, Phone, Email } from '@mui/icons-material';
+import useStore from '../store/useStore';
 
-function ResultsArea({ results, loading, searchType }) {
+function ResultsArea() {
+    const results = useStore((state) => state.results);
+    const loading = useStore((state) => state.loading);
+    const searchType = useStore((state) => state.searchType);
+    const error = useStore((state) => state.error);
     // Affichage pour la recherche SIRET (résultat unique)
     const renderSiretResult = () => {
         if (!results) return null;
@@ -180,13 +185,19 @@ function ResultsArea({ results, loading, searchType }) {
                 {searchType === 'fuzzy' && results && results.length > 0 && ` (${results.length})`}
             </Typography>
 
+            {error && (
+                <Alert severity="error" sx={{ mt: 2 }}>
+                    {error}
+                </Alert>
+            )}
+
             {loading && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
                     <CircularProgress size={60} />
                 </Box>
             )}
 
-            {!loading && !results && (
+            {!loading && !results && !error && (
                 <Box sx={{
                     display: 'flex',
                     flexDirection: 'column',
