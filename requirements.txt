@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+duckdb
+pandas
+pyarrow
+python-Levenshtein
+requests
