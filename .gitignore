@@ -26,3 +26,4 @@ dist-ssr
 #data locale
 data_raw/
 data_parquet/
+api/__pycache__/
