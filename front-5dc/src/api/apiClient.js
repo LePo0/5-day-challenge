@@ -9,9 +9,10 @@ const API_BASE_URL = 'http://localhost:8000/api/v1';
  * Fonction utilitaire pour gérer les appels API
  * @param {string} endpoint - L'endpoint à appeler (sans le préfixe /api/v1)
  * @param {object} options - Options fetch (method, headers, body, etc.)
+ * @param {number} timeout - Timeout en millisecondes (défaut: 10000ms)
  * @returns {Promise} - Promesse avec les données JSON
  */
-async function apiRequest(endpoint, options = {}) {
+async function apiRequest(endpoint, options = {}, timeout = 10000) {
     const url = `${API_BASE_URL}${endpoint}`;
 
     const defaultOptions = {
@@ -22,8 +23,15 @@ async function apiRequest(endpoint, options = {}) {
 
     const config = { ...defaultOptions, ...options };
 
+    // Création d'un AbortController pour le timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    config.signal = controller.signal;
+
     try {
         const response = await fetch(url, config);
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ message: 'Erreur réseau' }));
@@ -32,6 +40,18 @@ async function apiRequest(endpoint, options = {}) {
 
         return await response.json();
     } catch (error) {
+        clearTimeout(timeoutId);
+
+        if (error.name === 'AbortError') {
+            console.error(`Timeout API [${endpoint}]: Le serveur ne répond pas`);
+            throw new Error('Le serveur ne répond pas. Veuillez vérifier qu\'il est bien démarré.');
+        }
+
+        if (error.message.includes('fetch')) {
+            console.error(`Erreur de connexion [${endpoint}]:`, error);
+            throw new Error('Impossible de se connecter au serveur. Vérifiez qu\'il est démarré sur http://localhost:8000');
+        }
+
         console.error(`Erreur API [${endpoint}]:`, error);
         throw error;
     }
@@ -60,14 +80,14 @@ const apiClient = {
 
     /**
      * Recherche fuzzy (textuelle)
-     * GET /search?query=...&postal_code=...
+     * GET /search?q=...&dept=...
      * @param {string} query - Texte de recherche (optionnel)
-     * @param {string} postalCode - Code postal (optionnel)
+     * @param {string} dept - Code département (optionnel)
      */
-    search: async (query = '', postalCode = '') => {
+    search: async (query = '', dept = '') => {
         const params = new URLSearchParams();
-        if (query) params.append('query', query);
-        if (postalCode) params.append('postal_code', postalCode);
+        if (query) params.append('q', query);
+        if (dept) params.append('dept', dept);
 
         return apiRequest(`/search?${params.toString()}`);
     },
