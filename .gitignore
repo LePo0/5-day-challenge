@@ -26,3 +26,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# data locales
+data_raw/
+data_parquet/
+venv/
+__pycache__/
+*.pyc
+.env
+duckdb/*.db
