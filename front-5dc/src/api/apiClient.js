@@ -80,14 +80,14 @@ const apiClient = {
 
     /**
      * Recherche fuzzy (textuelle)
-     * GET /search?q=...&dept=...
-     * @param {string} query - Texte de recherche (optionnel)
-     * @param {string} dept - Code département (optionnel)
+     * GET /search?q=...&postal_code=...
+     * @param {string} query - Texte de recherche (obligatoire)
+     * @param {string} postalCode - Code postal (optionnel)
      */
-    search: async (query = '', dept = '') => {
+    search: async (query = '', postalCode = '') => {
         const params = new URLSearchParams();
         if (query) params.append('q', query);
-        if (dept) params.append('dept', dept);
+        if (postalCode) params.append('postal_code', postalCode);
 
         return apiRequest(`/search?${params.toString()}`);
     },

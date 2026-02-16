@@ -12,83 +12,84 @@ function ResultsArea() {
     const error = useStore((state) => state.error);
     const [viewMode, setViewMode] = useState(0); // 0 = formatted, 1 = JSON
 
-    // Affichage pour la recherche SIRET (résultat unique)
+    // Affichage pour la recherche SIRET (résultat unique) - Structure Exemples 1-2
     const renderSiretResult = () => {
         if (!results) return null;
-
-        const { identity, asso_id, location } = results;
 
         return (
             <Card variant="outlined" sx={{ mt: 2 }}>
                 <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
                         <Typography variant="h5" fontWeight="bold">
-                            {identity?.nom_raison_sociale || 'N/A'}
+                            {results.name || 'N/A'}
                         </Typography>
                         <Chip
-                            label={location?.code_postal || 'N/A'}
+                            label={results.address?.postal_code || 'N/A'}
                             color="primary"
                             size="small"
                         />
                     </Box>
 
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                        SIRET: {identity?.siret || 'N/A'}
+                        SIRET: {results.siret || 'N/A'}
                     </Typography>
 
-                    {identity?.enseigne && (
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                            Enseigne: {identity.enseigne}
-                        </Typography>
-                    )}
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Statut: {results.status || 'N/A'}
+                    </Typography>
 
-                    {asso_id?.id_rna && (
+                    {results.rna && (
                         <Chip
-                            label={`Association RNA: ${asso_id.id_rna}`}
+                            label={`RNA: ${results.rna}`}
                             color="success"
                             size="small"
                             sx={{ mt: 1, mb: 2 }}
                         />
                     )}
 
+                    {results.nature && (
+                        <Chip
+                            label={results.nature}
+                            color="info"
+                            size="small"
+                            sx={{ mt: 1, mb: 2, ml: 1 }}
+                        />
+                    )}
+
                     <Divider sx={{ my: 2 }} />
 
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                        {location && (
-                            <Box sx={{ display: 'flex', alignItems: 'start', gap: 1 }}>
-                                <LocationOn fontSize="small" color="primary" />
-                                <Typography variant="body2">
-                                    {location.numero_voie} {location.type_voie} {location.libelle_voie}
-                                    {location.code_postal && location.commune &&
-                                        `, ${location.code_postal} ${location.commune}`
-                                    }
-                                </Typography>
-                            </Box>
-                        )}
+                        {results.address && (
+                            <>
+                                <Box sx={{ display: 'flex', alignItems: 'start', gap: 1 }}>
+                                    <LocationOn fontSize="small" color="primary" />
+                                    <Typography variant="body2">
+                                        {results.address.number} {results.address.street}
+                                        {results.address.postal_code && results.address.city &&
+                                            `, ${results.address.postal_code} ${results.address.city}`
+                                        }
+                                    </Typography>
+                                </Box>
 
-                        {location?.latitude && location?.longitude && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <LocationOn fontSize="small" color="secondary" />
-                                <Typography variant="body2">
-                                    Coordonnées GPS: {location.latitude}, {location.longitude}
-                                    {location.geo_score && ` (score: ${location.geo_score})`}
-                                </Typography>
-                            </Box>
-                        )}
+                                {results.address.latitude && results.address.longitude && (
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <LocationOn fontSize="small" color="secondary" />
+                                        <Typography variant="body2">
+                                            GPS: {results.address.latitude}, {results.address.longitude}
+                                        </Typography>
+                                    </Box>
+                                )}
 
-                        {identity?.categorie_entreprise && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Business fontSize="small" color="primary" />
-                                <Typography variant="body2">
-                                    Catégorie: {identity.categorie_entreprise}
-                                </Typography>
-                            </Box>
-                        )}
-
-                        {asso_id?.date_publication_jo && (
-                            <Typography variant="caption" color="text.secondary">
-                                Date publication JO: {asso_id.date_publication_jo}
-                            </Typography>
+                                {results.address.is_ban_validated && (
+                                    <Chip
+                                        label="Adresse validée BAN"
+                                        color="success"
+                                        variant="outlined"
+                                        size="small"
+                                        sx={{ alignSelf: 'flex-start' }}
+                                    />
+                                )}
+                            </>
                         )}
                     </Box>
                 </CardContent>
@@ -96,17 +97,13 @@ function ResultsArea() {
         );
     };
 
-    // Affichage pour la recherche fuzzy (liste de résultats)
+    // Affichage pour la recherche fuzzy (liste de résultats) - Structure Exemple 4
     const renderFuzzyResults = () => {
         if (!results || !results.results || results.results.length === 0) return null;
 
         return (
             <>
                 <Box sx={{ mb: 2 }}>
-                    <Typography variant="body2" color="text.secondary">
-                        Requête: {results.query || 'N/A'}
-                        {results.filter_dept && ` | Département: ${results.filter_dept}`}
-                    </Typography>
                     <Typography variant="body2" color="text.secondary">
                         Total: {results.count || 0} résultat(s)
                     </Typography>
@@ -125,20 +122,14 @@ function ResultsArea() {
                                     <Typography variant="subtitle1" fontWeight="bold">
                                         {result.name}
                                     </Typography>
-                                    {result.is_association && (
-                                        <Chip label="Association" color="success" size="small" />
-                                    )}
+                                    <Chip label={result.siret} color="primary" size="small" />
                                 </Box>
 
-                                <Typography variant="body2" color="text.secondary" gutterBottom>
-                                    SIRET: {result.siret}
-                                </Typography>
-
-                                {result.city && (
+                                {result.address_city && (
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
                                         <LocationOn fontSize="small" color="action" />
                                         <Typography variant="body2">
-                                            {result.city}
+                                            {result.address_city}
                                         </Typography>
                                     </Box>
                                 )}
@@ -150,96 +141,63 @@ function ResultsArea() {
         );
     };
 
-    // Affichage pour les statistiques
+    // Affichage pour les statistiques - Structure Exemple 5
     const renderStats = () => {
         if (!results) return null;
 
         return (
             <Box sx={{ mt: 2 }}>
-                {/* En-tête avec zone et total */}
+                {/* En-tête avec code postal */}
                 <Card variant="outlined" sx={{ mb: 3, p: 3, textAlign: 'center' }}>
                     <Typography variant="overline" color="text.secondary">
                         Code Postal
                     </Typography>
                     <Typography variant="h4" fontWeight="bold" color="primary" gutterBottom>
-                        {results.zone}
-                    </Typography>
-                    <Divider sx={{ my: 2 }} />
-                    <Typography variant="h5" color="text.secondary">
-                        {results.total_entites?.toLocaleString() || 0} entités totales
+                        {results.postal_code}
                     </Typography>
                 </Card>
 
-                {/* Répartition simplifiée */}
-                {results.repartition && (
-                    <Card variant="outlined" sx={{ mb: 3 }}>
-                        <CardContent>
-                            <Typography variant="h6" gutterBottom>
-                                Répartition
-                            </Typography>
-                            <Divider sx={{ my: 2 }} />
-                            <Grid container spacing={2}>
-                                <Grid item xs={12} sm={4}>
-                                    <Box sx={{ textAlign: 'center', py: 2 }}>
-                                        <Business color="primary" sx={{ fontSize: 36, mb: 1 }} />
-                                        <Typography variant="h5" fontWeight="bold">
-                                            {results.repartition.entreprises_pures?.toLocaleString() || 0}
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary">
-                                            Entreprises pures
-                                        </Typography>
-                                    </Box>
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
-                                    <Box sx={{ textAlign: 'center', py: 2 }}>
-                                        <Group color="success" sx={{ fontSize: 36, mb: 1 }} />
-                                        <Typography variant="h5" fontWeight="bold">
-                                            {results.repartition.associations?.toLocaleString() || 0}
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary">
-                                            Associations
-                                        </Typography>
-                                    </Box>
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
-                                    <Box sx={{ textAlign: 'center', py: 2 }}>
-                                        <Business color="error" sx={{ fontSize: 36, mb: 1 }} />
-                                        <Typography variant="h5" fontWeight="bold">
-                                            {results.repartition.etablissements_fermes?.toLocaleString() || 0}
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary">
-                                            Établissements fermés
-                                        </Typography>
-                                    </Box>
-                                </Grid>
-                            </Grid>
-                        </CardContent>
-                    </Card>
-                )}
+                {/* Statistiques principales */}
+                <Grid container spacing={2} sx={{ mb: 3 }}>
+                    <Grid item xs={12} sm={6}>
+                        <Card variant="outlined">
+                            <CardContent sx={{ textAlign: 'center', py: 3 }}>
+                                <Business color="primary" sx={{ fontSize: 42, mb: 1 }} />
+                                <Typography variant="h4" fontWeight="bold">
+                                    {results.total_active_companies?.toLocaleString() || 0}
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                    Entreprises actives
+                                </Typography>
+                            </CardContent>
+                        </Card>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                        <Card variant="outlined">
+                            <CardContent sx={{ textAlign: 'center', py: 3 }}>
+                                <Group color="success" sx={{ fontSize: 42, mb: 1 }} />
+                                <Typography variant="h4" fontWeight="bold">
+                                    {results.total_associations?.toLocaleString() || 0}
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                    Associations
+                                </Typography>
+                            </CardContent>
+                        </Card>
+                    </Grid>
+                </Grid>
 
                 {/* Activité principale */}
-                {results.top_naf && (
+                {results.top_activity && (
                     <Card variant="outlined">
                         <CardContent>
                             <Typography variant="h6" gutterBottom>
-                                Activité principale (NAF)
+                                Activité principale
                             </Typography>
                             <Divider sx={{ my: 2 }} />
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
-                                <Box>
-                                    <Typography variant="h6" fontWeight="bold" color="primary">
-                                        {results.top_naf.code}
-                                    </Typography>
-                                    <Typography variant="body1" color="text.secondary">
-                                        {results.top_naf.libelle}
-                                    </Typography>
-                                </Box>
-                                <Chip
-                                    label={`${results.top_naf.count?.toLocaleString() || 0} établissements`}
-                                    color="primary"
-                                    size="medium"
-                                />
-                            </Box>
+                            <Typography variant="body1" fontWeight="medium">
+                                {results.top_activity}
+                            </Typography>
                         </CardContent>
                     </Card>
                 )}

@@ -27,10 +27,8 @@ function FuzzySearch() {
         setError(null);
 
         try {
-            // Extract department code (first 2 digits) from postal code
-            const dept = postalCode.length >= 2 ? postalCode.substring(0, 2) : '';
             const client = mockMode ? mockApiClient : apiClient;
-            const data = await client.search(query, dept);
+            const data = await client.search(query, postalCode);
             setResults(data);
             showToast('success', `${data.count || 0} résultat(s) trouvé(s)`);
         } catch (error) {
@@ -41,13 +39,13 @@ function FuzzySearch() {
         }
     };
 
-    const isValid = query.trim() !== '' || postalCode !== '';
+    const isValid = query.trim() !== '';
 
     // Exemples disponibles en mode mock
     const mockExamples = [
-        { query: 'boulangerie', dept: '69', label: 'Boulangeries Rhône' },
-        { query: 'club tennis', dept: '69', label: 'Clubs Tennis Rhône' },
-        { query: 'croix rouge', dept: '75', label: 'Croix Rouge Paris' }
+        { query: 'boulangerie', postalCode: '69001', label: 'Boulangeries Lyon' },
+        { query: 'club tennis', postalCode: '69001', label: 'Clubs Tennis Lyon' },
+        { query: 'croix rouge', postalCode: '75014', label: 'Croix Rouge Paris' }
     ];
 
     return (
@@ -58,10 +56,10 @@ function FuzzySearch() {
 
             <Alert severity="info" sx={{ borderRadius: 2 }}>
                 <Typography variant="subtitle1">
-                    Au moins un champ doit être rempli.
+                    Le texte de recherche est obligatoire.
                 </Typography>
                 <Typography variant="subtitle1">
-                    Retourne 10 résultats maximum, triés par pertinence.
+                    Le code postal est optionnel (filtre géographique).
                 </Typography>
             </Alert>
 
@@ -71,17 +69,17 @@ function FuzzySearch() {
                         Mode Mock - Exemples disponibles :
                     </Typography>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
-                        {mockExamples.map(({ query: q, dept, label }) => (
+                        {mockExamples.map(({ query: q, postalCode: pc, label }) => (
                             <Chip
-                                key={`${q}-${dept}`}
+                                key={`${q}-${pc}`}
                                 label={label}
                                 size="small"
                                 clickable
                                 onClick={() => {
                                     setQuery(q);
-                                    setPostalCode(dept + '000');
+                                    setPostalCode(pc);
                                 }}
-                                color={query === q ? 'primary' : 'default'}
+                                color={query === q && postalCode === pc ? 'primary' : 'default'}
                             />
                         ))}
                     </Box>
@@ -94,15 +92,18 @@ function FuzzySearch() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Croix Rouge, Carrefour..."
+                required
+                error={query.trim() === '' && query.length > 0}
+                helperText="Obligatoire - Recherche dans les noms d'entreprises"
             />
 
             <TextField
                 fullWidth
-                label="Code Postal"
+                label="Code Postal (optionnel)"
                 value={postalCode}
                 onChange={handlePostalCodeChange}
                 placeholder="75015"
-                helperText={postalCode ? `${postalCode.length}/5 chiffres` : 'Optionnel'}
+                helperText={postalCode ? `${postalCode.length}/5 chiffres` : 'Optionnel - Filtre géographique'}
             />
 
             <Button

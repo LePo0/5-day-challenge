@@ -43,11 +43,11 @@ const mockApiClient = {
     /**
      * Recherche fuzzy (mock)
      * @param {string} query - Texte de recherche
-     * @param {string} dept - Code département
+     * @param {string} postalCode - Code postal complet
      */
-    search: async (query = '', dept = '') => {
+    search: async (query = '', postalCode = '') => {
         await simulateDelay();
-        return getMockSearch(query, dept);
+        return getMockSearch(query, postalCode);
     },
 
     /**
