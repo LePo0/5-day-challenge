@@ -3,12 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from datetime import datetime
+import time
 
 # Models
 
 class PingResponse(BaseModel):
     status: str = "ok"
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str
+    latency_ms: float
 
 class GoldenRecord(BaseModel):
     """Structure du Golden Record (SIRENE + RNA + BAN)"""
@@ -57,8 +59,8 @@ app = FastAPI(
     title="Challenge ETL API",
     description="API unifiée SIRENE + RNA + BAN avec données mockées",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/api/v1/docs",
+    redoc_url="/api/v1/redoc"
 )
 
 # CORS pour le frontend React sur port 5173 (Vite)
@@ -136,7 +138,7 @@ MOCK_ENTITIES = {
 
 # ==================== Endpoints ====================
 
-@app.get("/ping", response_model=PingResponse, tags=["Health"])
+@app.get("/api/v1/ping", response_model=PingResponse, tags=["Health"])
 async def ping():
     """
     Healthcheck - Vérifie que l'API est opérationnelle
@@ -145,11 +147,25 @@ async def ping():
     - Tests de disponibilité
     - Monitoring
     - Stress tests
+    
+    **Retourne :**
+    - status : État de l'API
+    - timestamp : Horodatage
+    - latency_ms : Temps de réponse en millisecondes
     """
-    return PingResponse(status="ok")
+    start_time = time.time()
+    
+    # Calcul de la latence
+    latency = round((time.time() - start_time) * 1000, 2)
+    
+    return PingResponse(
+        status="ok",
+        timestamp=datetime.now().isoformat(),
+        latency_ms=latency
+    )
 
 
-@app.get("/siret/{siret}", response_model=GoldenRecord, tags=["Entities"])
+@app.get("/api/v1/siret/{siret}", response_model=GoldenRecord, tags=["Entities"])
 async def get_siret(siret: str):
     """
     Récupération du Golden Record d'un établissement
@@ -184,7 +200,7 @@ async def get_siret(siret: str):
     return GoldenRecord(**MOCK_ENTITIES[siret])
 
 
-@app.get("/search", response_model=SearchResponse, tags=["Search"])
+@app.get("/api/v1/search", response_model=SearchResponse, tags=["Search"])
 async def search(
     q: Optional[str] = Query(None, description="Texte à chercher (nom ou enseigne)"),
     postal_code: Optional[str] = Query(None, description="Code postal (5 chiffres)")
@@ -254,7 +270,7 @@ async def search(
     )
 
 
-@app.get("/stats/{code_postal}", tags=["Statistics"])
+@app.get("/api/v1/stats/{code_postal}", tags=["Statistics"])
 async def get_stats(code_postal: str):
     """
     Statistiques par code postal (BONUS)
