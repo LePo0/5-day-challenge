@@ -70,122 +70,63 @@ def atomic_replace(tmp_path: str, final_path: str) -> None:
 def register_macros(con: duckdb.DuckDBPyConnection) -> None:
     """
     Macros SQL DuckDB: beaucoup plus rapides que les UDF Python.
-    - norm_txt: upper + strip_accents + suppression ponctuation + collapse spaces
+    - norm_txt: upper + suppression ponctuation + collapse spaces
     - norm_street: norm_txt + mapping abréviations "type voie"
     """
-    # NB: strip_accents est natif DuckDB (si ta version est récente).
-    # Si jamais ta version ne l'a pas, dis-moi et je te donne un fallback.
     con.execute(r"""
     CREATE OR REPLACE MACRO norm_txt(x) AS (
-      trim(
-        regexp_replace(
-          regexp_replace(
-            upper(strip_accents(COALESCE(x, ''))),
+      TRIM(
+        REGEXP_REPLACE(
+          REGEXP_REPLACE(
+            UPPER(COALESCE(x, '')),
             '[^A-Z0-9 ]+', ' ', 'g'
           ),
           '\s+', ' ', 'g'
         )
       )
     );
-
-    -- Normalisation voie: on applique le mapping sur la string normalisée.
-    -- Important: appliquer les formes longues avant les courtes (STE avant ST).
+    """)
+    
+    con.execute(r"""
     CREATE OR REPLACE MACRO norm_street(x) AS (
-      trim(
-        regexp_replace(
-          -- Collapse final (au cas où)
-          regexp_replace(
-            -- MAPPING
-            regexp_replace(
-              regexp_replace(
-                regexp_replace(
-                  regexp_replace(
-                    regexp_replace(
-                      regexp_replace(
-                        regexp_replace(
-                          regexp_replace(
-                            regexp_replace(
-                              regexp_replace(
-                                regexp_replace(
-                                  regexp_replace(
-                                    regexp_replace(
-                                      regexp_replace(
-                                        regexp_replace(
-                                          regexp_replace(
-                                            regexp_replace(
-                                              regexp_replace(
-                                                regexp_replace(
-                                                  -- base
-                                                  norm_txt(x),
-
-                                                  -- SAINTE / SAINT
-                                                  '\bSTE\b', 'SAINTE', 'g'
-                                                ),
-                                                '\bST\b', 'SAINT', 'g'
-                                              ),
-
-                                              -- AVENUE
-                                              '\bAVEN\b', 'AVENUE', 'g'
-                                            ),
-                                            '\bAVE\b', 'AVENUE', 'g'
-                                          ),
-                                          '\bAV\b', 'AVENUE', 'g'
-                                        ),
-
-                                        -- BOULEVARD
-                                        '\bBLVD\b', 'BOULEVARD', 'g'
-                                      ),
-                                      '\bBD\b', 'BOULEVARD', 'g'
-                                    ),
-
-                                    -- ROUTE
-                                    '\bRTE\b', 'ROUTE', 'g'
-                                  ),
-
-                                  -- CHEMIN
-                                  '\bCHEM\b', 'CHEMIN', 'g'
-                                ),
-                                '\bCHE\b', 'CHEMIN', 'g'
+      TRIM(
+        REGEXP_REPLACE(
+          REGEXP_REPLACE(
+            REGEXP_REPLACE(
+              REGEXP_REPLACE(
+                REGEXP_REPLACE(
+                  REGEXP_REPLACE(
+                    REGEXP_REPLACE(
+                      REGEXP_REPLACE(
+                        REGEXP_REPLACE(
+                          REGEXP_REPLACE(
+                            REGEXP_REPLACE(
+                              REGEXP_REPLACE(
+                                norm_txt(x),
+                                '\bSTE\b', 'SAINTE', 'g'
                               ),
-
-                              -- IMPASSE
-                              '\bIMP\b', 'IMPASSE', 'g'
+                              '\bST\b', 'SAINT', 'g'
                             ),
-
-                            -- PLACE
-                            '\bPL\b', 'PLACE', 'g'
+                            '\bAVEN\b|\bAVE\b|\bAV\b', 'AVENUE', 'g'
                           ),
-
-                          -- ALLEE
-                          '\bALL\b', 'ALLEE', 'g'
+                          '\bBLVD\b|\bBD\b', 'BOULEVARD', 'g'
                         ),
-
-                        -- COURS
-                        '\bCRS\b', 'COURS', 'g'
+                        '\bRTE\b|\bRT\b', 'ROUTE', 'g'
                       ),
-
-                      -- SQUARE
-                      '\bSQ\b', 'SQUARE', 'g'
+                      '\bCHEM\b|\bCHE\b', 'CHEMIN', 'g'
                     ),
-
-                    -- RESIDENCE
-                    '\bRES\b', 'RESIDENCE', 'g'
+                    '\bIMP\b', 'IMPASSE', 'g'
                   ),
-
-                  -- LIEU DIT
-                  '\bLDT\b', 'LIEU DIT', 'g'
+                  '\bPL\b', 'PLACE', 'g'
                 ),
-                '\bLD\b', 'LIEU DIT', 'g'
+                '\bALL\b', 'ALLEE', 'g'
               ),
-
-              -- RUELLE / MONTEE / FAUBOURG (vus dans ton audit)
-              '\bRLE\b', 'RUELLE', 'g'
+              '\bCRS\b', 'COURS', 'g'
             ),
-            '\bMTE\b', 'MONTEE', 'g'
+            '\bSQ\b', 'SQUARE', 'g'
           ),
-          '\bFG\b', 'FAUBOURG', 'g'
-        ),
-        '\s+', ' ', 'g'
+          '\s+', ' ', 'g'
+        )
       )
     );
     """)

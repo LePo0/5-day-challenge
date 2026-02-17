@@ -5,3 +5,4 @@ pandas
 pyarrow
 python-Levenshtein
 requests
+tqdm
