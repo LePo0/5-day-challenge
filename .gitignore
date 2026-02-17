@@ -32,6 +32,7 @@ data_raw/
 data_parquet/
 duckdb/
 duckdb/*.db
+catalog.db
 
 # Tempory python files
 __pycache__/
