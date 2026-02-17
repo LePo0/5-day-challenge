@@ -39,3 +39,7 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# Test outputs
+tests/test_output/
+tests/__pycache__/

@@ -18,7 +18,7 @@ def test_ping():
 
 def test_siret():
     """Test endpoint /api/v1/siret/{siret}"""
-    siret = "77567227200020"
+    siret = "77567227221138"
     response = requests.get(f"{BASE_URL}/siret/{siret}")
     assert response.status_code == 200
     data = response.json()

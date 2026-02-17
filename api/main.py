@@ -4,6 +4,26 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 from datetime import datetime
 import time
+import duckdb
+import os
+from pathlib import Path
+
+# ==================== Configuration ====================
+
+# Chemins vers les données
+DATA_DIR = Path(__file__).parent.parent / "data_parquet"
+DUCKDB_DIR = Path(__file__).parent.parent / "duckdb"
+CATALOG_DB = DUCKDB_DIR / "catalog.db"
+FTS_DB = DUCKDB_DIR / "fts_search.db"
+
+GOLDEN_RECORD = DATA_DIR / "golden_record.parquet"
+SEARCH_VIEW = DATA_DIR / "search_view.parquet"
+STATS_VIEW = DATA_DIR / "stats_view.parquet"
+
+# Connexions (partagées)
+con = None  # DuckDB
+fts_con = None  # SQLite FTS5
+stats_cache = {}  # Cache des stats en RAM
 
 # Models
 
@@ -16,7 +36,7 @@ class GoldenRecord(BaseModel):
     """Structure du Golden Record (SIRENE + RNA + BAN)"""
     siret: str
     siren: str
-    nom: str
+    nom: Optional[str] = None
     enseigne: Optional[str] = None
     code_postal: str
     numero_voie: Optional[str] = None
@@ -42,9 +62,9 @@ class SearchResult(BaseModel):
     siret: str
     nom: str
     enseigne: Optional[str] = None
-    adresse: str
-    code_postal: str
-    commune: str
+    adresse: Optional[str] = None
+    code_postal: Optional[str] = None
+    commune: Optional[str] = None
     id_rna: Optional[str] = None
 
 class SearchResponse(BaseModel):
@@ -57,7 +77,7 @@ class SearchResponse(BaseModel):
 
 app = FastAPI(
     title="Challenge ETL API",
-    description="API unifiée SIRENE + RNA + BAN avec données mockées",
+    description="API unifiée SIRENE + RNA + BAN",
     version="1.0.0",
     docs_url="/api/v1/docs",
     redoc_url="/api/v1/redoc"
@@ -77,64 +97,64 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==================== Données Mockées ====================
+# ==================== Startup / Shutdown ====================
 
-MOCK_ENTITIES = {
-    "77567227200020": {
-        "siret": "77567227200020",
-        "siren": "775672272",
-        "nom": "CROIX ROUGE FRANCAISE",
-        "enseigne": None,
-        "code_postal": "75015",
-        "numero_voie": "98",
-        "libelle_voie": "RUE DIDOT",
-        "commune": "PARIS 15",
-        "id_rna": "W751000022",
-        "titre_association": "CROIX ROUGE FRANCAISE",
-        "latitude": 48.8317,
-        "longitude": 2.3157,
-        "geo_score": 0.95,
-        "etat_administratif": "A",
-        "date_creation": "1945-05-08",
-        "date_maj": "2025-12-15"
-    },
-    "12345678901234": {
-        "siret": "12345678901234",
-        "siren": "123456789",
-        "nom": "ENTREPRISE DEMO SARL",
-        "enseigne": "DEMO SHOP",
-        "code_postal": "69001",
-        "numero_voie": "42",
-        "libelle_voie": "RUE DE LA PAIX",
-        "commune": "LYON 1ER",
-        "id_rna": None,
-        "titre_association": None,
-        "latitude": 45.7710,
-        "longitude": 4.8349,
-        "geo_score": 0.88,
-        "etat_administratif": "A",
-        "date_creation": "2010-03-15",
-        "date_maj": "2026-01-20"
-    },
-    "98765432109876": {
-        "siret": "98765432109876",
-        "siren": "987654321",
-        "nom": "ASSOCIATION SPORTIVE LOCALE",
-        "enseigne": "ASL SPORTS",
-        "code_postal": "33000",
-        "numero_voie": "15",
-        "libelle_voie": "AVENUE DES SPORTS",
-        "commune": "BORDEAUX",
-        "id_rna": "W331234567",
-        "titre_association": "ASSOCIATION SPORTIVE LOCALE",
-        "latitude": 44.8378,
-        "longitude": -0.5792,
-        "geo_score": 0.92,
-        "etat_administratif": "A",
-        "date_creation": "2018-09-10",
-        "date_maj": "2025-11-05"
-    }
-}
+@app.on_event("startup")
+async def startup_event():
+    """Initialisation au démarrage de l'API"""
+    global con, fts_con, stats_cache
+    
+    # Vérifier que catalog.db existe (avec les tables et index créés par views.py)
+    if not CATALOG_DB.exists():
+        raise FileNotFoundError(
+            f"Base DuckDB manquante : {CATALOG_DB}\n"
+            "Exécutez d'abord : python etl/views.py"
+        )
+    
+    # Connexion au catalog.db (tables et index déjà créés par views.py)
+    con = duckdb.connect(str(CATALOG_DB), read_only=True)
+    con.execute("SET threads = 4")
+    con.execute("SET memory_limit = '4GB'")
+    
+    print("✅ Connexion au catalog.db (avec index pré-construits)")
+    
+    # Vérifier que les tables existent
+    tables = con.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").fetchall()
+    table_names = [t[0] for t in tables]
+    
+    if 'search_view' not in table_names:
+        raise RuntimeError(
+            "Table search_view manquante dans catalog.db.\n"
+            "Ré-exécutez : python etl/views.py"
+        )
+    
+    # Connexion SQLite FTS5 pour recherche textuelle optimisée
+    if FTS_DB.exists():
+        import sqlite3
+        fts_con = sqlite3.connect(str(FTS_DB))
+        print("✅ Connexion à fts_search.db (index FTS5)")
+    else:
+        print("⚠️  fts_search.db absent - recherche textuelle sera plus lente")
+        fts_con = None
+    
+    # Charger stats_view en RAM (cache complet)
+    stats_df = con.execute("SELECT * FROM stats_view").df()
+    stats_cache = stats_df.set_index('code_postal').to_dict('index')
+    
+    print(f"✅ API démarrée")
+    print(f"  • Database      : {CATALOG_DB}")
+    print(f"  • FTS Index     : {'Activé' if fts_con else 'Désactivé'}")
+    print(f"  • Tables        : {', '.join(table_names)}")
+    print(f"  • Stats Cache   : {len(stats_cache)} codes postaux")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Nettoyage à l'arrêt de l'API"""
+    global con, fts_con
+    if con:
+        con.close()
+    if fts_con:
+        fts_con.close()
 
 # ==================== Endpoints ====================
 
@@ -190,14 +210,48 @@ async def get_siret(siret: str):
             detail="SIRET invalide : doit contenir exactement 14 chiffres"
         )
     
-    # Recherche dans les données mockées
-    if siret not in MOCK_ENTITIES:
+    # Requête dans golden_record (table avec index dans catalog.db)
+    result = con.execute("""
+        SELECT 
+            siret,
+            siren,
+            COALESCE(nom, '') as nom,
+            enseigne,
+            code_postal,
+            num_voie as numero_voie,
+            libelle_voie,
+            ville as commune,
+            id_rna,
+            rna_titre as titre_association,
+            latitude,
+            longitude,
+            CASE 
+                WHEN latitude IS NOT NULL THEN 1.0 
+                ELSE NULL 
+            END as geo_score,
+            etat as etat_administratif,
+            CAST(rna_date_creation AS VARCHAR) as date_creation,
+            NULL as date_maj
+        FROM golden_record
+        WHERE siret = ?
+    """, [siret]).fetchone()
+    
+    if not result:
         raise HTTPException(
             status_code=404,
             detail=f"SIRET {siret} introuvable dans la base de données"
         )
     
-    return GoldenRecord(**MOCK_ENTITIES[siret])
+    # Conversion en dictionnaire
+    columns = [
+        'siret', 'siren', 'nom', 'enseigne', 'code_postal', 
+        'numero_voie', 'libelle_voie', 'commune', 'id_rna', 
+        'titre_association', 'latitude', 'longitude', 'geo_score', 
+        'etat_administratif', 'date_creation', 'date_maj'
+    ]
+    data = dict(zip(columns, result))
+    
+    return GoldenRecord(**data)
 
 
 @app.get("/api/v1/search", response_model=SearchResponse, tags=["Search"])
@@ -227,46 +281,95 @@ async def search(
             detail="Code postal invalide : doit contenir exactement 5 chiffres"
         )
     
-    # Filtrage des entités mockées
-    results = []
-    for entity_data in MOCK_ENTITIES.values():
-        # Filtre par code postal
-        if postal_code and entity_data["code_postal"] != postal_code:
-            continue
+    # STRATÉGIE OPTIMISÉE : FTS5 si recherche textuelle, sinon DuckDB
+    if q and fts_con:
+        # === RECHERCHE FTS5 (< 100ms) ===
+        cursor = fts_con.cursor()
         
-        # Filtre par texte (recherche dans nom et enseigne)
-        if q:
-            search_text = q.lower()
-            nom_match = search_text in entity_data["nom"].lower()
-            enseigne_match = (
-                entity_data["enseigne"] and 
-                search_text in entity_data["enseigne"].lower()
-            )
-            
-            if not (nom_match or enseigne_match):
-                continue
+        # Construire la requête FTS
+        if postal_code:
+            cursor.execute("""
+                SELECT siret FROM search_fts 
+                WHERE search_fts MATCH ? AND code_postal = ?
+                LIMIT 50
+            """, (q, postal_code))
+        else:
+            cursor.execute("""
+                SELECT siret FROM search_fts 
+                WHERE search_fts MATCH ?
+                LIMIT 50
+            """, (q,))
         
-        # Construction du résultat
-        adresse = f"{entity_data['numero_voie'] or ''} {entity_data['libelle_voie'] or ''}".strip()
+        # Récupérer les SIRETs matchés
+        sirets = [row[0] for row in cursor.fetchall()]
         
-        results.append(SearchResult(
-            siret=entity_data["siret"],
-            nom=entity_data["nom"],
-            enseigne=entity_data["enseigne"],
-            adresse=adresse,
-            code_postal=entity_data["code_postal"],
-            commune=entity_data["commune"],
-            id_rna=entity_data["id_rna"]
-        ))
+        if not sirets:
+            return SearchResponse(query=q, postal_code=postal_code, count=0, results=[])
+        
+        # Enrichir avec les données DuckDB
+        placeholders = ','.join(['?' for _ in sirets])
+        results = con.execute(f"""
+            SELECT 
+                siret,
+                display_name as nom,
+                NULL as enseigne,
+                COALESCE(adresse, '') as adresse,
+                COALESCE(code_postal, '') as code_postal,
+                COALESCE(ville, '') as commune,
+                CASE WHEN is_association THEN 'W__' ELSE NULL END as id_rna
+            FROM search_view
+            WHERE siret IN ({placeholders})
+            LIMIT 10
+        """, sirets).fetchall()
     
-    # Limitation à 10 résultats
-    results = results[:10]
+    else:
+        # === RECHERCHE DUCKDB CLASSIQUE (avec index) ===
+        where_clauses = []
+        params = []
+        
+        if postal_code:
+            where_clauses.append("code_postal = ?")
+            params.append(postal_code)
+        
+        if q:
+            where_clauses.append("search_text_lower LIKE ?")
+            search_pattern = f"%{q.lower()}%"
+            params.append(search_pattern)
+        
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        
+        results = con.execute(f"""
+            SELECT 
+                siret,
+                display_name as nom,
+                NULL as enseigne,
+                COALESCE(adresse, '') as adresse,
+                COALESCE(code_postal, '') as code_postal,
+                COALESCE(ville, '') as commune,
+                CASE WHEN is_association THEN 'W__' ELSE NULL END as id_rna
+            FROM search_view
+            WHERE {where_sql}
+            LIMIT 10
+        """, params).fetchall()
+    
+    # Conversion en objets SearchResult
+    search_results = []
+    for row in results:
+        search_results.append(SearchResult(
+            siret=row[0],
+            nom=row[1],
+            enseigne=row[2],
+            adresse=row[3],
+            code_postal=row[4],
+            commune=row[5],
+            id_rna=row[6]
+        ))
     
     return SearchResponse(
         query=q or "",
         postal_code=postal_code,
-        count=len(results),
-        results=results
+        count=len(search_results),
+        results=search_results
     )
 
 
@@ -291,25 +394,25 @@ async def get_stats(code_postal: str):
             detail="Code postal invalide : doit contenir exactement 5 chiffres"
         )
     
-    # Statistiques mockées
-    nb_entreprises = len([
-        e for e in MOCK_ENTITIES.values()
-        if e["code_postal"] == code_postal and e["id_rna"] is None
-    ])
+    # Lookup O(1) dans le cache stats
+    if code_postal not in stats_cache:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Code postal {code_postal} introuvable dans la base"
+        )
     
-    nb_associations = len([
-        e for e in MOCK_ENTITIES.values()
-        if e["code_postal"] == code_postal and e["id_rna"] is not None
-    ])
+    stats = stats_cache[code_postal]
     
+    # Construction de la réponse (mapping des noms de colonnes)
     return {
         "code_postal": code_postal,
-        "nb_entreprises": nb_entreprises,
-        "nb_associations": nb_associations,
-        "top_naf": [
-            {"code": "8790B", "libelle": "Action sociale", "count": nb_associations},
-            {"code": "4711D", "libelle": "Supermarchés", "count": nb_entreprises}
-        ]
+        "total_etablissements": int(stats["total_entites"]),
+        "total_actifs": int(stats["total_active"]),
+        "total_associations": int(stats["total_associations"]),
+        "top_naf": {
+            "code": stats.get("top_naf_code"),
+            "count": int(stats.get("top_naf_count", 0)) if stats.get("top_naf_count") else 0
+        }
     }
 
 
