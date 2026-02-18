@@ -5,6 +5,7 @@
 
 # CSV -> Parquet (SIRENE, RNA, BAN)
 ingest:
+	python etl/download.py
 	python etl/ingest.py
 
 # Nettoyage adresses -> Tables Silver
