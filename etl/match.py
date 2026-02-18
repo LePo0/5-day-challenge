@@ -54,7 +54,7 @@ def main() -> None:
     #    Stratégie : on limite énormément les comparaisons :
     #      - même code_postal
     #      - même block_key (prefix texte normalisé)
-    #    Score basé sur distance d’édition normalisée.
+    #    Score COMPOSITE basé sur nom (70%) + adresse (30%) pour réduire faux positifs
     #
     # Important : on n’essaie PAS de matcher tout le monde : ce serait trop cher.
     # L’objectif est d’attraper les cas importants (dont le Gold case).
@@ -65,13 +65,32 @@ def main() -> None:
             r.id_rna,
             s.name_norm,
             r.title_norm,
+            s.street_norm,
+            r.street_norm as rna_street,
             s.code_postal,
-            -- score: 1 - dist / max_len
+            -- Score NOM (similitude des noms)
             CASE
               WHEN greatest(length(s.name_norm), length(r.title_norm)) = 0 THEN 0.0
               ELSE 1.0 - (editdist3(s.name_norm, r.title_norm)::DOUBLE
                          / greatest(length(s.name_norm), length(r.title_norm))::DOUBLE)
-            END AS score
+            END AS score_nom,
+            -- Score ADRESSE (similitude des adresses)
+            CASE
+              WHEN greatest(length(s.street_norm), length(r.street_norm)) = 0 THEN 0.0
+              ELSE 1.0 - (editdist3(s.street_norm, r.street_norm)::DOUBLE
+                         / greatest(length(s.street_norm), length(r.street_norm))::DOUBLE)
+            END AS score_adresse,
+            -- Score COMPOSITE : 70% nom + 30% adresse (réduit les faux positifs)
+            (0.7 * CASE
+              WHEN greatest(length(s.name_norm), length(r.title_norm)) = 0 THEN 0.0
+              ELSE 1.0 - (editdist3(s.name_norm, r.title_norm)::DOUBLE
+                         / greatest(length(s.name_norm), length(r.title_norm))::DOUBLE)
+            END +
+            0.3 * CASE
+              WHEN greatest(length(s.street_norm), length(r.street_norm)) = 0 THEN 0.0
+              ELSE 1.0 - (editdist3(s.street_norm, r.street_norm)::DOUBLE
+                         / greatest(length(s.street_norm), length(r.street_norm))::DOUBLE)
+            END) AS score
         FROM read_parquet(?) s
         JOIN read_parquet(?) r
           ON s.code_postal = r.code_postal
@@ -180,26 +199,26 @@ def main() -> None:
     log(f"OK écrit: {LINK_OUT}")
 
     # 5) Gold check : SIRET Croix Rouge
-    gold_siret = "77567227221138"
-    gold = con.execute(f"""
-        SELECT siret, id_rna, score, methode FROM link_final WHERE siret = '{gold_siret}';
-    """).fetchall()
+    # gold_siret = "77567227221138"
+    # gold = con.execute(f"""
+    #     SELECT siret, id_rna, score, methode FROM link_final WHERE siret = '{gold_siret}';
+    # """).fetchall()
     
-    if gold:
-        log(f" GOLD CHECK ({gold_siret}): {gold}")
-    else:
-        log(f"  GOLD CHECK ({gold_siret}): PAS DE MATCH TROUVÉ")
+    # if gold:
+    #     log(f" GOLD CHECK ({gold_siret}): {gold}")
+    # else:
+    #     log(f"  GOLD CHECK ({gold_siret}): PAS DE MATCH TROUVÉ")
         
-        # Debug supplémentaire
-        sirene_info = con.execute(f"""
-            SELECT name_norm, street_norm, code_postal, city_norm, block_key
-            FROM read_parquet('{SIRENE_SILVER}')
-            WHERE siret = '{gold_siret}'
-        """).fetchone()
+    #     # Debug supplémentaire
+    #     sirene_info = con.execute(f"""
+    #         SELECT name_norm, street_norm, code_postal, city_norm, block_key
+    #         FROM read_parquet('{SIRENE_SILVER}')
+    #         WHERE siret = '{gold_siret}'
+    #     """).fetchone()
         
-        if sirene_info:
-            log(f"   SIRENE: name='{sirene_info[0]}', street='{sirene_info[1]}', "
-                f"cp={sirene_info[2]}, city={sirene_info[3]}, block_key='{sirene_info[4]}'")
+    #     if sirene_info:
+    #         log(f"   SIRENE: name='{sirene_info[0]}', street='{sirene_info[1]}', "
+    #             f"cp={sirene_info[2]}, city={sirene_info[3]}, block_key='{sirene_info[4]}'")
 
     con.close()
     log("DONE match")

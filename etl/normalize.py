@@ -479,8 +479,16 @@ COPY (
             nom_commune,
             lat,
             lon,
-            norm_street(nom_voie) AS street_norm,
-            norm_txt(nom_commune) AS city_norm
+            -- ✅ AJOUT NUMÉRO dans street_norm (aligné sur SIRENE/RNA)
+            norm_street(
+                concat_ws(' ', numero, nom_voie)
+            ) AS street_norm,
+            -- ✅ NORMALISATION ARRONDISSEMENTS dans city_norm
+            CASE
+                WHEN nom_commune LIKE '%ARRONDISSEMENT' 
+                THEN norm_txt(regexp_replace(nom_commune, ' [0-9]+E? ARRONDISSEMENT$', ''))
+                ELSE norm_txt(nom_commune)
+            END AS city_norm
         FROM {src}
         WHERE code_postal IS NOT NULL AND length(code_postal)=5
     )

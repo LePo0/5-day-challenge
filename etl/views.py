@@ -84,17 +84,18 @@ COPY (
     ),
     
     -- Matching BAN : meilleure adresse par (code_postal, ville norm, rue norm)
+    -- city_norm normalise déjà les arrondissements (Paris/Lyon/Marseille)
     ban_best AS (
         SELECT 
             code_postal,
-            nom_commune,
+            city_norm,
             street_norm,
             AVG(lat) as latitude,
             AVG(lon) as longitude,
             COUNT(*) as nb_adresses
         FROM '{BAN_SILVER}'
         WHERE lat IS NOT NULL AND lon IS NOT NULL
-        GROUP BY code_postal, nom_commune, street_norm
+        GROUP BY code_postal, city_norm, street_norm
     )
     
     SELECT
@@ -159,7 +160,7 @@ COPY (
     -- Géolocalisation BAN (optionnel, par adresse normalisée)
     LEFT JOIN ban_best b 
         ON s.code_postal = b.code_postal 
-        AND s.city_norm = b.nom_commune
+        AND s.city_norm = b.city_norm
         AND s.street_norm = b.street_norm
         
     ORDER BY s.siret  -- Tri pour optimiser les lookups SIRET
@@ -175,7 +176,7 @@ TO '{out_tmp}' {opts};
     with_rna = con.execute(f"SELECT count(*) FROM '{out_final}' WHERE id_rna IS NOT NULL").fetchone()[0]
     with_geo = con.execute(f"SELECT count(*) FROM '{out_final}' WHERE is_ban_validated = true").fetchone()[0]
     
-    log(f"✅ GOLDEN RECORD écrit : {count:,} SIRET")
+    log(f" GOLDEN RECORD écrit : {count:,} SIRET")
     log(f"   • Avec RNA         : {with_rna:,} ({with_rna/count*100:.1f}%)")
     log(f"   • Avec géoloc BAN  : {with_geo:,} ({with_geo/count*100:.1f}%)")
 
@@ -277,7 +278,7 @@ TO '{out_tmp}' {opts};
     atomic_replace(out_tmp, out_final)
     
     count = con.execute(f"SELECT count(*) FROM '{out_final}'").fetchone()[0]
-    log(f"✅ SEARCH VIEW écrit : {count:,} entrées actives")
+    log(f" SEARCH VIEW écrit : {count:,} entrées actives")
 
 def create_stats_view(con: duckdb.DuckDBPyConnection) -> None:
     """
@@ -354,7 +355,7 @@ TO '{out_tmp}' {opts};
     atomic_replace(out_tmp, out_final)
     
     count = con.execute(f"SELECT count(*) FROM '{out_final}'").fetchone()[0]
-    log(f"✅ STATS VIEW écrit : {count:,} codes postaux")
+    log(f" STATS VIEW écrit : {count:,} codes postaux")
 
 def create_indexes(con: duckdb.DuckDBPyConnection) -> None:
     """
@@ -369,62 +370,62 @@ def create_indexes(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(f"CREATE OR REPLACE TABLE search_view AS SELECT * FROM '{SEARCH_VIEW}'")
     con.execute(f"CREATE OR REPLACE TABLE stats_view AS SELECT * FROM '{STATS_VIEW}'")
     
-    log("  ✅ Tables chargées")
+    log("   Tables chargées")
     
     # === INDEX GOLDEN_RECORD (Endpoint: GET /siret/{siret}) ===
     log("  📍 Index pour GET /siret/{siret}...")
     try:
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_golden_siret ON golden_record(siret)")
-        log("    ✅ golden_record.siret (UNIQUE) - Lookup O(1)")
+        log("     golden_record.siret (UNIQUE) - Lookup O(1)")
     except Exception as e:
-        log(f"    ⚠️  Erreur siret : {e}")
+        log(f"      Erreur siret : {e}")
     
     try:
         con.execute("CREATE INDEX IF NOT EXISTS idx_golden_cp ON golden_record(code_postal)")
-        log("    ✅ golden_record.code_postal - Filtrage géographique")
+        log("     golden_record.code_postal - Filtrage géographique")
     except Exception as e:
-        log(f"    ⚠️  Erreur code_postal : {e}")
+        log(f"      Erreur code_postal : {e}")
     
     # Index pour agrégations stats (si stats_view absente ou calcul temps réel)
     try:
         con.execute("CREATE INDEX IF NOT EXISTS idx_golden_cp_etat ON golden_record(code_postal, etat)")
-        log("    ✅ golden_record.(code_postal, etat) - Count fermés")
+        log("     golden_record.(code_postal, etat) - Count fermés")
     except Exception as e:
-        log(f"    ⚠️  Erreur cp+etat : {e}")
+        log(f"      Erreur cp+etat : {e}")
     
     try:
         con.execute("CREATE INDEX IF NOT EXISTS idx_golden_cp_naf ON golden_record(code_postal, naf)")
-        log("    ✅ golden_record.(code_postal, naf) - Top NAF")
+        log("     golden_record.(code_postal, naf) - Top NAF")
     except Exception as e:
-        log(f"    ⚠️  Erreur cp+naf : {e}")
+        log(f"      Erreur cp+naf : {e}")
     
     # === INDEX SEARCH_VIEW (Endpoint: GET /search?q=...&postal_code=...) ===
     log("")
     log("  🔍 Index pour GET /search...")
     try:
         con.execute("CREATE INDEX IF NOT EXISTS idx_search_siret ON search_view(siret)")
-        log("    ✅ search_view.siret - Lookup direct")
+        log("     search_view.siret - Lookup direct")
     except Exception as e:
-        log(f"    ⚠️  Erreur siret : {e}")
+        log(f"      Erreur siret : {e}")
     
     try:
         con.execute("CREATE INDEX IF NOT EXISTS idx_search_cp ON search_view(code_postal)")
-        log("    ✅ search_view.code_postal - Filtre primaire (CRITIQUE)")
+        log("     search_view.code_postal - Filtre primaire (CRITIQUE)")
     except Exception as e:
-        log(f"    ⚠️  Erreur code_postal : {e}")
+        log(f"      Erreur code_postal : {e}")
     
     # Index composite OPTIMAL pour recherche textuelle filtrée par CP
     try:
         con.execute("CREATE INDEX IF NOT EXISTS idx_search_cp_text ON search_view(code_postal, search_text_lower)")
-        log("    ✅ search_view.(code_postal, search_text_lower) - Recherche optimisée")
+        log("     search_view.(code_postal, search_text_lower) - Recherche optimisée")
     except Exception as e:
-        log(f"    ⚠️  Erreur cp+text : {e}")
+        log(f"      Erreur cp+text : {e}")
     
     try:
         con.execute("CREATE INDEX IF NOT EXISTS idx_search_ville ON search_view(ville_lower)")
-        log("    ✅ search_view.ville_lower - Recherche par ville")
+        log("     search_view.ville_lower - Recherche par ville")
     except Exception as e:
-        log(f"    ⚠️  Erreur ville : {e}")
+        log(f"      Erreur ville : {e}")
     
     # Index partiel pour recherches d'associations (bonus perf)
     try:
@@ -433,18 +434,18 @@ def create_indexes(con: duckdb.DuckDBPyConnection) -> None:
             ON search_view(code_postal, search_text_lower) 
             WHERE id_rna IS NOT NULL
         """)
-        log("    ✅ search_view WHERE is_association=true - Index partiel")
+        log("     search_view WHERE is_association=true - Index partiel")
     except Exception as e:
-        log(f"    ⚠️  Erreur associations : {e}")
+        log(f"      Erreur associations : {e}")
     
     # === INDEX STATS_VIEW (Endpoint: GET /stats/{code_postal}) ===
     log("")
     log("  📊 Index pour GET /stats/{code_postal}...")
     try:
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_stats_cp ON stats_view(code_postal)")
-        log("    ✅ stats_view.code_postal (UNIQUE) - Lookup O(1)")
+        log("     stats_view.code_postal (UNIQUE) - Lookup O(1)")
     except Exception as e:
-        log(f"    ⚠️  Erreur stats : {e}")
+        log(f"      Erreur stats : {e}")
     
     # === OPTIMISATION QUERY PLANNER ===
     log("")
@@ -452,12 +453,12 @@ def create_indexes(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("ANALYZE golden_record")
     con.execute("ANALYZE search_view")
     con.execute("ANALYZE stats_view")
-    log("    ✅ Tables analysées (distribution des valeurs calculée)")
+    log("     Tables analysées (distribution des valeurs calculée)")
     
     # === RÉSUMÉ ===
     log("")
     log("=" * 80)
-    log("📋 RÉSUMÉ DES INDEX CRÉÉS")
+    log(" RÉSUMÉ DES INDEX CRÉÉS")
     log("=" * 80)
     log("  GOLDEN_RECORD (42M lignes) :")
     log("    • siret (UNIQUE)           → GET /siret/{siret} < 50ms")
@@ -541,7 +542,7 @@ def create_fts_sqlite() -> None:
     con_duck.close()
     
     size_mb = os.path.getsize(SQLITE_FTS) / 1024 / 1024
-    log(f"  ✅ Index FTS5 créé : {size_mb:.1f} MB")
+    log(f"   Index FTS5 créé : {size_mb:.1f} MB")
 
 def verify_views(con: duckdb.DuckDBPyConnection) -> None:
     """Vérifications de cohérence"""
@@ -591,31 +592,31 @@ def benchmark_performance(con: duckdb.DuckDBPyConnection) -> None:
     log("=" * 80)
     
     # Test 1 : Lookup par SIRET
-    log("\n1️⃣  GET /siret/77567227200020 (Croix Rouge)")
+    log("\n  GET /siret/77567227200020 (Croix Rouge)")
     start = time.time()
     result = con.execute("SELECT siret, nom, id_rna FROM golden_record WHERE siret = '77567227200020'").fetchone()
     duration = (time.time() - start) * 1000
     
     if result:
-        log(f"  ✅ Trouvé : {result[1]} | RNA={result[2]}")
-        log(f"  ⏱️  {duration:.2f} ms {'🚀' if duration < 100 else '✅' if duration < 500 else '⚠️ LENT'}")
+        log(f"   Trouvé : {result[1]} | RNA={result[2]}")
+        log(f"    {duration:.2f} ms {'' if duration < 100 else '' if duration < 500 else ' LENT'}")
     
     # Test 2 : Recherche par CP
-    log("\n2️⃣  GET /search?postal_code=75015")
+    log("\n  GET /search?postal_code=75015")
     start = time.time()
     results = con.execute("SELECT COUNT(*) FROM search_view WHERE code_postal = '75015'").fetchone()
     duration = (time.time() - start) * 1000
-    log(f"  ✅ {results[0]:,} établissements")
-    log(f"  ⏱️  {duration:.2f} ms {'🚀' if duration < 50 else '✅' if duration < 200 else '⚠️ LENT'}")
+    log(f"   {results[0]:,} établissements")
+    log(f"    {duration:.2f} ms {'' if duration < 50 else '' if duration < 200 else ' LENT'}")
     
     # Test 3 : Stats
-    log("\n3️⃣  GET /stats/75015")
+    log("\n  GET /stats/75015")
     start = time.time()
     result = con.execute("SELECT total_active, total_associations FROM stats_view WHERE code_postal = '75015'").fetchone()
     duration = (time.time() - start) * 1000
     if result:
-        log(f"  ✅ Actifs={result[0]:,} | Associations={result[1]:,}")
-        log(f"  ⏱️  {duration:.2f} ms {'🚀' if duration < 10 else '✅' if duration < 50 else '⚠️ LENT'}")
+        log(f"   Actifs={result[0]:,} | Associations={result[1]:,}")
+        log(f"    {duration:.2f} ms {'' if duration < 10 else '' if duration < 50 else ' LENT'}")
 
 def main() -> None:
     log("=" * 80)
@@ -630,7 +631,7 @@ def main() -> None:
         (LINK_SIRENE_RNA, "Liens SIRENE-RNA"),
     ]:
         if not os.path.exists(path):
-            log(f"❌ Manquant : {name} ({path})")
+            log(f" Manquant : {name} ({path})")
             return
     
     # Connexion DuckDB
@@ -656,7 +657,7 @@ def main() -> None:
         try:
             create_fts_sqlite()
         except Exception as e:
-            log(f"⚠️  FTS5 non créé (optionnel) : {e}")
+            log(f"  FTS5 non créé (optionnel) : {e}")
         
         # 4. Vérifications
         log("")
@@ -667,17 +668,17 @@ def main() -> None:
         benchmark_performance(con)
         
         log("\n" + "=" * 80)
-        log("✅ VUES & INDEX CRÉÉS AVEC SUCCÈS")
+        log(" VUES & INDEX CRÉÉS AVEC SUCCÈS")
         log("=" * 80)
         log("")
-        log("📁 Fichiers générés :")
+        log(" Fichiers générés :")
         log(f"  • {GOLDEN_RECORD} (table maître)")
         log(f"  • {SEARCH_VIEW} (recherche)")
         log(f"  • {STATS_VIEW} (stats pré-calculées)")
         log(f"  • {DB_PATH} (catalog DuckDB + 10 index)")
         log(f"  • duckdb/fts_search.db (index FTS5 SQLite)")
         log("")
-        log("🚀 Prochaine étape :")
+        log(" Prochaine étape :")
         log("  python api/main.py")
         log("  ou")
         log("  uvicorn api.main:app --reload")
