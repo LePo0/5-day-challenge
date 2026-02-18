@@ -78,11 +78,11 @@ def main() -> None:
     log(f"  silver_total: {silver_total:,}")
 
     if silver_total != bronze_kept:
-        log("  ❌ MISMATCH: silver != bronze_kept")
+        log("MISMATCH: silver != bronze_kept")
         if STRICT:
             die("STRICT=1 => arrêt sur mismatch count")
     else:
-        log("  ✅ OK: silver == bronze_kept")
+        log("OK: silver == bronze_kept")
 
     # ------------------------------------------------------------------
     # 2) Colonnes requises
@@ -105,11 +105,11 @@ def main() -> None:
     missing = sorted(required.difference(set(cols)))
     log("COLUMNS")
     if missing:
-        log(f"  ❌ colonnes manquantes: {missing}")
+        log(f"colonnes manquantes: {missing}")
         if STRICT:
             die("STRICT=1 => colonnes requises manquantes")
     else:
-        log("  ✅ OK")
+        log("OK")
 
     # ------------------------------------------------------------------
     # 3) Standardisation

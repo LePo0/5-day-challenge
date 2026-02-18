@@ -116,7 +116,7 @@ async def startup_event():
     con.execute("SET threads = 4")
     con.execute("SET memory_limit = '4GB'")
     
-    print("✅ Connexion au catalog.db (avec index pré-construits)")
+    print("Connexion au catalog.db (avec index pré-construits)")
     
     # Vérifier que les tables existent
     tables = con.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").fetchall()
@@ -132,16 +132,16 @@ async def startup_event():
     if FTS_DB.exists():
         import sqlite3
         fts_con = sqlite3.connect(str(FTS_DB))
-        print("✅ Connexion à fts_search.db (index FTS5)")
+        print("Connexion à fts_search.db (index FTS5)")
     else:
-        print("⚠️  fts_search.db absent - recherche textuelle sera plus lente")
+        print("fts_search.db absent - recherche textuelle sera plus lente")
         fts_con = None
     
     # Charger stats_view en RAM (cache complet)
     stats_df = con.execute("SELECT * FROM stats_view").df()
     stats_cache = stats_df.set_index('code_postal').to_dict('index')
     
-    print(f"✅ API démarrée")
+    print(f"API démarrée")
     print(f"  • Database      : {CATALOG_DB}")
     print(f"  • FTS Index     : {'Activé' if fts_con else 'Désactivé'}")
     print(f"  • Tables        : {', '.join(table_names)}")
