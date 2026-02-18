@@ -180,26 +180,26 @@ def main() -> None:
     log(f"OK écrit: {LINK_OUT}")
 
     # 5) Gold check : SIRET Croix Rouge
-    gold_siret = "77567227221138"
-    gold = con.execute(f"""
-        SELECT siret, id_rna, score, methode FROM link_final WHERE siret = '{gold_siret}';
-    """).fetchall()
+    # gold_siret = "77567227221138"
+    # gold = con.execute(f"""
+    #     SELECT siret, id_rna, score, methode FROM link_final WHERE siret = '{gold_siret}';
+    # """).fetchall()
     
-    if gold:
-        log(f" GOLD CHECK ({gold_siret}): {gold}")
-    else:
-        log(f"  GOLD CHECK ({gold_siret}): PAS DE MATCH TROUVÉ")
+    # if gold:
+    #     log(f" GOLD CHECK ({gold_siret}): {gold}")
+    # else:
+    #     log(f"  GOLD CHECK ({gold_siret}): PAS DE MATCH TROUVÉ")
         
-        # Debug supplémentaire
-        sirene_info = con.execute(f"""
-            SELECT name_norm, street_norm, code_postal, city_norm, block_key
-            FROM read_parquet('{SIRENE_SILVER}')
-            WHERE siret = '{gold_siret}'
-        """).fetchone()
+    #     # Debug supplémentaire
+    #     sirene_info = con.execute(f"""
+    #         SELECT name_norm, street_norm, code_postal, city_norm, block_key
+    #         FROM read_parquet('{SIRENE_SILVER}')
+    #         WHERE siret = '{gold_siret}'
+    #     """).fetchone()
         
-        if sirene_info:
-            log(f"   SIRENE: name='{sirene_info[0]}', street='{sirene_info[1]}', "
-                f"cp={sirene_info[2]}, city={sirene_info[3]}, block_key='{sirene_info[4]}'")
+    #     if sirene_info:
+    #         log(f"   SIRENE: name='{sirene_info[0]}', street='{sirene_info[1]}', "
+    #             f"cp={sirene_info[2]}, city={sirene_info[3]}, block_key='{sirene_info[4]}'")
 
     con.close()
     log("DONE match")
