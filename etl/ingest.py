@@ -90,7 +90,11 @@ def convert_rna(con):
             SELECT 
                 id as id_rna, siret, titre as titre_asso,
                 adrs_codepostal as code_postal, adrs_libcommune as ville,
-                objet, date_creat
+                objet, date_creat,
+                -- Ajout colonnes adresse pour matching
+                adrs_numvoie as num_voie,
+                adrs_typevoie as type_voie,
+                adrs_libvoie as libelle_voie
             FROM read_csv({files_sql}, 
                 delim=';', 
                 header=True, 
@@ -105,9 +109,9 @@ def convert_rna(con):
 
 def convert_ban(con):
     print("\nTraitement BAN...")
-    if os.path.exists(f'{PARQUET_DIR}/ban.parquet'):
-        print("ban.parquet existe déjà, on passe.")
-        return
+    # if os.path.exists(f'{PARQUET_DIR}/ban.parquet'):
+    #     print("ban.parquet existe déjà, on passe.")
+    #     return
 
     gz_path = os.path.join(RAW_DIR, "adresses-france.csv.gz").replace("\\", "/")
     query = f"""

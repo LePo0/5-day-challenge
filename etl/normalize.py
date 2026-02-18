@@ -30,7 +30,7 @@ DEV_LIMIT = int(os.getenv("DEV_LIMIT", "0"))
 
 PROD_CODEC = os.getenv("PROD_CODEC", "ZSTD")  # ZSTD / SNAPPY / GZIP / "" (none)
 THREADS = int(os.getenv("DUCKDB_THREADS", "8"))
-MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "4GB")
+MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
 
 # ---------------------------
 # BAN checks tuning
@@ -319,6 +319,35 @@ def normalize_sirene(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(
         f"""
 COPY (
+    WITH base AS (
+        SELECT
+            siret,
+            siren,
+            nom,
+            enseigne,
+            naf,
+            etat,
+            code_postal,
+            num_voie AS numero,
+            trim(type_voie) AS type_voie,
+            libelle_voie,
+            ville,
+            -- Fallback explicite : nom → enseigne → ''
+            COALESCE(
+                NULLIF(trim(nom), ''),
+                NULLIF(trim(enseigne), ''),
+                ''
+            ) AS nom_effectif,
+            norm_street(
+                concat_ws(
+                    ' ',
+                    num_voie,
+                    NULLIF(trim(type_voie), '[ND]'),
+                    libelle_voie
+                )
+            ) AS rue_normalisee
+        FROM {src}
+    )
     SELECT
         siret,
         siren,
@@ -327,24 +356,24 @@ COPY (
         naf,
         etat,
         code_postal,
-        num_voie AS numero,
-        trim(type_voie) AS type_voie,
+        numero,
+        type_voie,
         libelle_voie,
         ville,
 
-        norm_txt(concat_ws(' ', nom, enseigne)) AS name_norm,
-
-        norm_street(
-            concat_ws(
-                ' ',
-                NULLIF(trim(type_voie), '[ND]'),
-                libelle_voie
-            )
-        ) AS street_norm,
-
+        norm_txt(nom_effectif) AS name_norm,
+        rue_normalisee AS street_norm,
         norm_txt(ville) AS city_norm,
-        substr(norm_txt(concat_ws(' ', nom, enseigne)), 1, 10) AS block_key
-    FROM {src}
+        
+        -- Block key hybride :
+        -- Si nom existe → substr(nom, 1, 10)
+        -- Sinon → substr(rue, 1, 10) pour matching par adresse
+        CASE
+            WHEN length(norm_txt(nom_effectif)) > 0 
+            THEN substr(norm_txt(nom_effectif), 1, 10)
+            ELSE substr(rue_normalisee, 1, 10)
+        END AS block_key
+    FROM base
 )
 TO '{out_tmp}' {opts};
 """
@@ -366,6 +395,29 @@ def normalize_rna(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(
         f"""
 COPY (
+    WITH base AS (
+        SELECT
+            id_rna,
+            siret,
+            titre_asso,
+            code_postal,
+            ville,
+            objet,
+            date_creat,
+            num_voie,
+            type_voie,
+            libelle_voie,
+            -- Normalisation adresse
+            norm_street(
+                concat_ws(
+                    ' ',
+                    num_voie,
+                    NULLIF(trim(type_voie), ''),
+                    libelle_voie
+                )
+            ) AS rue_normalisee
+        FROM {src}
+    )
     SELECT
         id_rna,
         siret,
@@ -374,11 +426,23 @@ COPY (
         ville,
         objet,
         date_creat,
+        num_voie,
+        type_voie,
+        libelle_voie,
 
         norm_txt(titre_asso) AS title_norm,
         norm_txt(ville) AS city_norm,
-        substr(norm_txt(titre_asso), 1, 10) AS block_key
-    FROM {src}
+        rue_normalisee AS street_norm,
+        
+        -- Block key hybride (comme SIRENE) :
+        -- Si titre existe → substr(titre, 1, 10)
+        -- Sinon → substr(rue, 1, 10) pour matching par adresse
+        CASE
+            WHEN length(norm_txt(titre_asso)) > 0 
+            THEN substr(norm_txt(titre_asso), 1, 10)
+            ELSE substr(rue_normalisee, 1, 10)
+        END AS block_key
+    FROM base
 )
 TO '{out_tmp}' {opts};
 """
@@ -401,9 +465,25 @@ def normalize_ban(con: duckdb.DuckDBPyConnection) -> None:
     # - tokenisation: numero/rep/cp/commune + street_norm
     # - parsing: type_voie_norm + libelle_voie_norm (heuristique)
     # - standardisation: norm_street/norm_txt
+    # OPTIMISATION: CTE pour calculer norm_street() une seule fois au lieu de 3x
     con.execute(
         f"""
 COPY (
+    WITH normalized AS (
+        SELECT
+            id,
+            code_postal,
+            numero,
+            rep,
+            nom_voie,
+            nom_commune,
+            lat,
+            lon,
+            norm_street(nom_voie) AS street_norm,
+            norm_txt(nom_commune) AS city_norm
+        FROM {src}
+        WHERE code_postal IS NOT NULL AND length(code_postal)=5
+    )
     SELECT
         id,
         code_postal,
@@ -413,14 +493,11 @@ COPY (
         nom_commune,
         lat,
         lon,
-
-        norm_street(nom_voie) AS street_norm,
-        norm_txt(nom_commune) AS city_norm,
-
-        ban_type(norm_street(nom_voie)) AS type_voie_norm,
-        ban_libelle(norm_street(nom_voie)) AS libelle_voie_norm
-    FROM {src}
-    WHERE code_postal IS NOT NULL AND length(code_postal)=5
+        street_norm,
+        city_norm,
+        ban_type(street_norm) AS type_voie_norm,
+        ban_libelle(street_norm) AS libelle_voie_norm
+    FROM normalized
 )
 TO '{out_tmp}' {opts};
 """

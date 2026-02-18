@@ -1,0 +1,319 @@
+{
+    "description": "Jeu de données de test pour valider l'ETL SIRENE-RNA",
+    "version": "1.0",
+    "date": "2026-02-17",
+    "sirene": [
+        {
+            "siret": "12345678900001",
+            "siren": "123456789",
+            "nom": "CROIX ROUGE FRANCAISE",
+            "enseigne": null,
+            "naf": "88.10A",
+            "etat": "A",
+            "code_postal": "75014",
+            "num_voie": "98",
+            "type_voie": "RUE",
+            "libelle_voie": "DIDOT",
+            "ville": "PARIS"
+        },
+        {
+            "siret": "98765432100001",
+            "siren": "987654321",
+            "nom": "SECOURS POPULAIRE",
+            "enseigne": null,
+            "naf": "88.99B",
+            "etat": "A",
+            "code_postal": "75015",
+            "num_voie": "12",
+            "type_voie": "AVENUE",
+            "libelle_voie": "DE LA REPUBLIQUE",
+            "ville": "PARIS"
+        },
+        {
+            "siret": "11111111100001",
+            "siren": "111111111",
+            "nom": null,
+            "enseigne": "EPICERIE DU COIN",
+            "naf": "47.11B",
+            "etat": "A",
+            "code_postal": "69001",
+            "num_voie": "5",
+            "type_voie": "BD",
+            "libelle_voie": "JEAN JAURES",
+            "ville": "LYON"
+        },
+        {
+            "siret": "22222222200001",
+            "siren": "222222222",
+            "nom": "RESTOS DU COEUR",
+            "enseigne": null,
+            "naf": "88.10A",
+            "etat": "A",
+            "code_postal": "13001",
+            "num_voie": "3",
+            "type_voie": "RUE",
+            "libelle_voie": "PARADIS",
+            "ville": "MARSEILLE"
+        },
+        {
+            "siret": "33333333300001",
+            "siren": "333333333",
+            "nom": null,
+            "enseigne": null,
+            "naf": "94.99Z",
+            "etat": "A",
+            "code_postal": "33000",
+            "num_voie": "10",
+            "type_voie": "CHE",
+            "libelle_voie": "DES VIGNES",
+            "ville": "BORDEAUX"
+        },
+        {
+            "siret": "44444444400001",
+            "siren": "444444444",
+            "nom": "ASSOCIATION SPORTIVE",
+            "enseigne": null,
+            "naf": "93.12Z",
+            "etat": "A",
+            "code_postal": "06000",
+            "num_voie": "25",
+            "type_voie": "AVENUE",
+            "libelle_voie": "VICTOR HUGO",
+            "ville": "NICE"
+        }
+    ],
+    "rna": [
+        {
+            "id_rna": "W751000001",
+            "siret": "12345678900001",
+            "titre_asso": "CROIX ROUGE FRANCAISE",
+            "code_postal": "75014",
+            "ville": "PARIS",
+            "objet": "Action sociale et humanitaire",
+            "date_creat": "2005-01-15",
+            "num_voie": "98",
+            "type_voie": "RUE",
+            "libelle_voie": "DIDOT"
+        },
+        {
+            "id_rna": "W751000002",
+            "siret": null,
+            "titre_asso": "SECOURS POPULAIRE FRANCAIS",
+            "code_postal": "75015",
+            "ville": "PARIS",
+            "objet": "Aide aux personnes en difficulte",
+            "date_creat": "2003-06-20",
+            "num_voie": "12",
+            "type_voie": "AV",
+            "libelle_voie": "DE LA REPUBLIQUE"
+        },
+        {
+            "id_rna": "W690000001",
+            "siret": null,
+            "titre_asso": "EPICERIE DU COIN",
+            "code_postal": "69001",
+            "ville": "LYON",
+            "objet": "Epicerie solidaire",
+            "date_creat": "2010-03-10",
+            "num_voie": "5",
+            "type_voie": "BOULEVARD",
+            "libelle_voie": "JEAN JAURES"
+        },
+        {
+            "id_rna": "W130000001",
+            "siret": "22222222200001",
+            "titre_asso": "RESTOS DU COEUR",
+            "code_postal": "13002",
+            "ville": "MARSEILLE",
+            "objet": "Distribution alimentaire",
+            "date_creat": "2008-11-05",
+            "num_voie": "7",
+            "type_voie": "RUE",
+            "libelle_voie": "SAINT PIERRE"
+        },
+        {
+            "id_rna": "W330000001",
+            "siret": null,
+            "titre_asso": "CLUB SPORTIF BORDEAUX",
+            "code_postal": "33000",
+            "ville": "BORDEAUX",
+            "objet": "Activites sportives",
+            "date_creat": "2012-09-12",
+            "num_voie": "10",
+            "type_voie": "CHEMIN",
+            "libelle_voie": "DES VIGNES"
+        },
+        {
+            "id_rna": "W060000001",
+            "siret": null,
+            "titre_asso": "ASSOCIATION SPORTIVE NICOISE",
+            "code_postal": "06000",
+            "ville": "NICE",
+            "objet": "Sport et loisirs",
+            "date_creat": "2015-02-28",
+            "num_voie": "25",
+            "type_voie": "AVENUE",
+            "libelle_voie": "VICTOR HUGO"
+        }
+    ],
+    "ban": [
+        {
+            "id": "75114_2990_00098",
+            "code_postal": "75014",
+            "numero": "98",
+            "rep": null,
+            "nom_voie": "RUE DIDOT",
+            "nom_commune": "PARIS",
+            "lat": 48.8293,
+            "lon": 2.3180
+        },
+        {
+            "id": "75115_0123_00012",
+            "code_postal": "75015",
+            "numero": "12",
+            "rep": null,
+            "nom_voie": "AVENUE DE LA REPUBLIQUE",
+            "nom_commune": "PARIS",
+            "lat": 48.8400,
+            "lon": 2.2850
+        },
+        {
+            "id": "69001_0456_00005",
+            "code_postal": "69001",
+            "numero": "5",
+            "rep": null,
+            "nom_voie": "BOULEVARD JEAN JAURES",
+            "nom_commune": "LYON",
+            "lat": 45.7640,
+            "lon": 4.8357
+        }
+    ],
+    "test_scenarios": {
+        "scenario_1_exact_siret": {
+            "description": "Match exact par SIRET identique",
+            "sirene_siret": "12345678900001",
+            "rna_id": "W751000001",
+            "expected_method": "EXACT_SIRET",
+            "expected_score": 1.0,
+            "should_match": true
+        },
+        "scenario_2_fuzzy_name": {
+            "description": "Match par similarité de nom (avec variation orthographique)",
+            "sirene_siret": "98765432100001",
+            "rna_id": "W751000002",
+            "expected_method": "BLOCKED_NAME",
+            "expected_score_min": 0.78,
+            "should_match": true
+        },
+        "scenario_3_address_match": {
+            "description": "Match par adresse (nom vide dans SIRENE)",
+            "sirene_siret": "33333333300001",
+            "rna_id": "W330000001",
+            "expected_method": "ADDRESS_MATCH",
+            "expected_score_min": 0.85,
+            "should_match": true
+        },
+        "scenario_4_exact_siret_different_cp": {
+            "description": "SIRET exact mais CP différents (incohérence données sources)",
+            "sirene_siret": "22222222200001",
+            "rna_id": "W130000001",
+            "expected_method": "EXACT_SIRET",
+            "expected_score": 1.0,
+            "should_match": true,
+            "cp_coherence": false,
+            "comment": "SIRET identique mais adresses différentes (13001 vs 13002)"
+        },
+        "scenario_5_name_fuzzy_similar": {
+            "description": "Match par nom similaire (enseigne vs titre)",
+            "sirene_siret": "11111111100001",
+            "rna_id": "W690000001",
+            "expected_method": "BLOCKED_NAME",
+            "expected_score_min": 0.78,
+            "should_match": true
+        },
+        "scenario_6_address_fuzzy": {
+            "description": "Match par adresse avec normalisation (AVENUE → AV)",
+            "sirene_siret": "44444444400001",
+            "rna_id": "W060000001",
+            "expected_method": "ADDRESS_MATCH",
+            "expected_score_min": 0.85,
+            "should_match": true
+        }
+    },
+    "expected_normalizations": {
+        "sirene": {
+            "12345678900001": {
+                "name_norm": "CROIX ROUGE FRANCAISE",
+                "street_norm": "98 RUE DIDOT",
+                "city_norm": "PARIS",
+                "block_key": "CROIX ROUG"
+            },
+            "33333333300001": {
+                "name_norm": "",
+                "street_norm": "10 CHE VIGNES",
+                "city_norm": "BORDEAUX",
+                "block_key": "10 CHE VIG"
+            }
+        },
+        "rna": {
+            "W751000001": {
+                "title_norm": "CROIX ROUGE FRANCAISE",
+                "street_norm": "98 RUE DIDOT",
+                "city_norm": "PARIS",
+                "block_key": "CROIX ROUG"
+            },
+            "W751000002": {
+                "title_norm": "SECOURS POPULAIRE FRANCAIS",
+                "street_norm": "12 AV REPUBLIQUE",
+                "city_norm": "PARIS",
+                "block_key": "SECOURS PO"
+            }
+        }
+    },
+    "expected_links": [
+        {
+            "siret": "12345678900001",
+            "id_rna": "W751000001",
+            "methode": "EXACT_SIRET",
+            "score": 1.0
+        },
+        {
+            "siret": "98765432100001",
+            "id_rna": "W751000002",
+            "methode": "BLOCKED_NAME",
+            "score_min": 0.78
+        },
+        {
+            "siret": "11111111100001",
+            "id_rna": "W690000001",
+            "methode": "BLOCKED_NAME",
+            "score_min": 0.78
+        },
+        {
+            "siret": "22222222200001",
+            "id_rna": "W130000001",
+            "methode": "EXACT_SIRET",
+            "score": 1.0
+        },
+        {
+            "siret": "33333333300001",
+            "id_rna": "W330000001",
+            "methode": "ADDRESS_MATCH",
+            "score_min": 0.85
+        },
+        {
+            "siret": "44444444400001",
+            "id_rna": "W060000001",
+            "methode": "ADDRESS_MATCH",
+            "score_min": 0.85
+        }
+    ],
+    "quality_thresholds": {
+        "blocked_name_min_score": 0.78,
+        "address_match_min_score": 0.85,
+        "expected_links_count": 6,
+        "expected_exact_siret_count": 2,
+        "expected_blocked_name_count": 2,
+        "expected_address_match_count": 2
+    }
+}

@@ -32,6 +32,7 @@ data_raw/
 data_parquet/
 duckdb/
 duckdb/*.db
+catalog.db
 
 # Tempory python files
 __pycache__/
@@ -39,3 +40,7 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# Test outputs
+tests/test_output/
+tests/__pycache__/
