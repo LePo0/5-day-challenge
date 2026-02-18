@@ -293,6 +293,71 @@ CREATE OR REPLACE MACRO ban_libelle(s) AS (
             trim(substr(s, length(ban_type(s)) + 2))
     END
 );
+
+-- ---------------------------
+-- NEW: Parsing macros for address components
+-- ---------------------------
+
+-- Parse numero + complement/repetition to extract full numero with BIS/TER/etc.
+-- Handles formats like: "50-50 BIS", "50 A 50 BIS", "50/50 BIS", "16 bis", "4B", "4 B", "B", etc.
+CREATE OR REPLACE MACRO normalize_numero(num, rep, comp) AS (
+    trim(
+        norm_txt(
+            CASE
+                -- Si repetition existe (RNA: "bis", "ter", "B", etc.) -> concaténer avec numero
+                WHEN rep IS NOT NULL AND trim(rep) != '' THEN concat_ws(' ', num, rep)
+                -- Si complement contient patron "X BIS/TER/etc." -> extraire
+                WHEN comp IS NOT NULL AND (
+                    upper(comp) LIKE '%BIS%' OR 
+                    upper(comp) LIKE '%TER%' OR
+                    upper(comp) LIKE '%QUATER%' OR
+                    upper(comp) LIKE '%QUINQUIES%' OR
+                    upper(comp) = 'B' OR
+                    upper(comp) = 'T' OR
+                    upper(comp) = 'Q' OR
+                    upper(comp) LIKE '% B' OR
+                    upper(comp) LIKE 'B %' OR
+                    upper(comp) LIKE '% B %'
+                )
+                    THEN concat_ws(' ', num, 
+                        CASE 
+                            WHEN upper(comp) LIKE '%QUINQUIES%' THEN 'QUINQUIES'
+                            WHEN upper(comp) LIKE '%QUATER%' THEN 'QUATER'
+                            WHEN upper(comp) LIKE '%TER%' THEN 'TER'
+                            WHEN upper(comp) LIKE '%BIS%' THEN 'BIS'
+                            WHEN upper(comp) LIKE '%B%' THEN 'B'
+                            WHEN upper(comp) LIKE '%T%' THEN 'T'
+                            WHEN upper(comp) LIKE '%Q%' THEN 'Q'
+                            ELSE ''
+                        END
+                    )
+                -- Sinon, juste le numero
+                ELSE num
+            END
+        )
+    )
+);
+
+-- Normalize city name to handle arrondissements (PARIS 19E, LYON 5EME, MARSEILLE 8, etc.)
+CREATE OR REPLACE MACRO normalize_city(city) AS (
+    norm_txt(
+        regexp_replace(
+            regexp_replace(
+                regexp_replace(
+                    COALESCE(city, ''),
+                    ' [0-9]+(E|ER|EME|ÈME|ème)? ARRONDISSEMENT$',
+                    '',
+                    'i'
+                ),
+                ' [0-9]+(E|ER|EME|ÈME|ème)$',
+                '',
+                'i'
+            ),
+            '  +',
+            ' '
+        )
+    )
+);
 """
         )
 
@@ -328,9 +393,11 @@ COPY (
             naf,
             etat,
             code_postal,
-            num_voie AS numero,
-            trim(type_voie) AS type_voie,
+            num_voie,
+            repetition,
+            type_voie,
             libelle_voie,
+            complement_adresse,
             ville,
             -- Fallback explicite : nom → enseigne → ''
             COALESCE(
@@ -338,14 +405,12 @@ COPY (
                 NULLIF(trim(enseigne), ''),
                 ''
             ) AS nom_effectif,
-            norm_street(
-                concat_ws(
-                    ' ',
-                    num_voie,
-                    NULLIF(trim(type_voie), '[ND]'),
-                    libelle_voie
-                )
-            ) AS rue_normalisee
+            -- Parse numero avec BIS/TER depuis complement/repetition
+            normalize_numero(num_voie, repetition, complement_adresse) AS numero_parsed,
+            -- Normaliser type de voie
+            norm_txt(type_voie) AS type_voie_parsed,
+            -- Normaliser libellé voie
+            norm_txt(libelle_voie) AS libelle_voie_parsed
         FROM {src}
     )
     SELECT
@@ -356,23 +421,39 @@ COPY (
         naf,
         etat,
         code_postal,
-        numero,
+        num_voie AS numero,
         type_voie,
         libelle_voie,
+        complement_adresse,
         ville,
 
         norm_txt(nom_effectif) AS name_norm,
-        rue_normalisee AS street_norm,
-        norm_txt(ville) AS city_norm,
+        normalize_city(ville) AS city_norm,
+        
+        -- Nouvelles colonnes standardisées pour matching
+        numero_parsed AS numero_norm,
+        type_voie_parsed AS type_voie_norm,
+        libelle_voie_parsed AS libelle_voie_norm,
+        
+        -- street_norm complet : numero + type_voie + libelle_voie (pour rétrocompatibilité)
+        norm_street(
+            concat_ws(' ', numero_parsed, type_voie_parsed, libelle_voie_parsed)
+        ) AS street_norm,
+        
+        -- adresse_norm unifiée : NUMERO TYPE_VOIE LIBELLE_VOIE
+        trim(concat_ws(' ', numero_parsed, type_voie_parsed, libelle_voie_parsed)) AS adresse_norm,
         
         -- Block key hybride :
         -- Si nom existe → substr(nom, 1, 10)
-        -- Sinon → substr(rue, 1, 10) pour matching par adresse
+        -- Sinon → substr(adresse, 1, 10) pour matching par adresse
         CASE
             WHEN length(norm_txt(nom_effectif)) > 0 
             THEN substr(norm_txt(nom_effectif), 1, 10)
-            ELSE substr(rue_normalisee, 1, 10)
-        END AS block_key
+            ELSE substr(trim(concat_ws(' ', numero_parsed, type_voie_parsed, libelle_voie_parsed)), 1, 10)
+        END AS block_key,
+        
+        -- Block key adresse pour matching RNA sans nom
+        substr(trim(concat_ws(' ', numero_parsed, type_voie_parsed, libelle_voie_parsed)), 1, 10) AS block_key_address
     FROM base
 )
 TO '{out_tmp}' {opts};
@@ -405,17 +486,16 @@ COPY (
             objet,
             date_creat,
             num_voie,
+            repetition,
             type_voie,
             libelle_voie,
-            -- Normalisation adresse
-            norm_street(
-                concat_ws(
-                    ' ',
-                    num_voie,
-                    NULLIF(trim(type_voie), ''),
-                    libelle_voie
-                )
-            ) AS rue_normalisee
+            complement_adresse,
+            -- Parse numero avec BIS/TER depuis repetition/complement
+            normalize_numero(num_voie, repetition, complement_adresse) AS numero_parsed,
+            -- Normaliser type de voie
+            norm_txt(type_voie) AS type_voie_parsed,
+            -- Normaliser libellé voie
+            norm_txt(libelle_voie) AS libelle_voie_parsed
         FROM {src}
     )
     SELECT
@@ -426,22 +506,38 @@ COPY (
         ville,
         objet,
         date_creat,
-        num_voie,
+        num_voie AS numero,
         type_voie,
         libelle_voie,
+        complement_adresse,
 
         norm_txt(titre_asso) AS title_norm,
-        norm_txt(ville) AS city_norm,
-        rue_normalisee AS street_norm,
+        normalize_city(ville) AS city_norm,
+        
+        -- Nouvelles colonnes standardisées pour matching
+        numero_parsed AS numero_norm,
+        type_voie_parsed AS type_voie_norm,
+        libelle_voie_parsed AS libelle_voie_norm,
+        
+        -- street_norm complet : numero + type_voie + libelle_voie (pour rétrocompatibilité)
+        norm_street(
+            concat_ws(' ', numero_parsed, type_voie_parsed, libelle_voie_parsed)
+        ) AS street_norm,
+        
+        -- adresse_norm unifiée : NUMERO TYPE_VOIE LIBELLE_VOIE
+        trim(concat_ws(' ', numero_parsed, type_voie_parsed, libelle_voie_parsed)) AS adresse_norm,
         
         -- Block key hybride (comme SIRENE) :
         -- Si titre existe → substr(titre, 1, 10)
-        -- Sinon → substr(rue, 1, 10) pour matching par adresse
+        -- Sinon → substr(adresse, 1, 10) pour matching par adresse
         CASE
             WHEN length(norm_txt(titre_asso)) > 0 
             THEN substr(norm_txt(titre_asso), 1, 10)
-            ELSE substr(rue_normalisee, 1, 10)
-        END AS block_key
+            ELSE substr(trim(concat_ws(' ', numero_parsed, type_voie_parsed, libelle_voie_parsed)), 1, 10)
+        END AS block_key,
+        
+        -- Block key adresse pour matching par adresse uniquement
+        substr(trim(concat_ws(' ', numero_parsed, type_voie_parsed, libelle_voie_parsed)), 1, 10) AS block_key_address
     FROM base
 )
 TO '{out_tmp}' {opts};
@@ -463,32 +559,29 @@ def normalize_ban(con: duckdb.DuckDBPyConnection) -> None:
 
     # Focus BAN:
     # - tokenisation: numero/rep/cp/commune + street_norm
-    # - parsing: type_voie_norm + libelle_voie_norm (heuristique)
+    # - parsing: type_voie_norm + libelle_voie_norm via ban_type/ban_libelle
     # - standardisation: norm_street/norm_txt
-    # OPTIMISATION: CTE pour calculer norm_street() une seule fois au lieu de 3x
+    # - qualité: certification_commune, type_position
     con.execute(
         f"""
 COPY (
-    WITH normalized AS (
+    WITH base AS (
         SELECT
             id,
             code_postal,
             numero,
             rep,
             nom_voie,
+            nom_afnor,
             nom_commune,
             lat,
             lon,
-            -- ✅ AJOUT NUMÉRO dans street_norm (aligné sur SIRENE/RNA)
-            norm_street(
-                concat_ws(' ', numero, nom_voie)
-            ) AS street_norm,
-            -- ✅ NORMALISATION ARRONDISSEMENTS dans city_norm
-            CASE
-                WHEN nom_commune LIKE '%ARRONDISSEMENT' 
-                THEN norm_txt(regexp_replace(nom_commune, ' [0-9]+E? ARRONDISSEMENT$', ''))
-                ELSE norm_txt(nom_commune)
-            END AS city_norm
+            certification_commune,
+            type_position,
+            -- Parse numero avec rep (BIS/TER)
+            normalize_numero(numero, rep, NULL) AS numero_parsed,
+            -- Normaliser nom_voie complet pour extraction type/libelle
+            norm_street(nom_voie) AS nom_voie_norm
         FROM {src}
         WHERE code_postal IS NOT NULL AND length(code_postal)=5
     )
@@ -498,14 +591,27 @@ COPY (
         numero,
         rep,
         nom_voie,
+        nom_afnor,
         nom_commune,
         lat,
         lon,
-        street_norm,
-        city_norm,
-        ban_type(street_norm) AS type_voie_norm,
-        ban_libelle(street_norm) AS libelle_voie_norm
-    FROM normalized
+        certification_commune,
+        type_position,
+        
+        -- Colonnes standardisées pour matching (comme SIRENE/RNA)
+        numero_parsed AS numero_norm,
+        ban_type(nom_voie_norm) AS type_voie_norm,
+        ban_libelle(nom_voie_norm) AS libelle_voie_norm,
+        
+        -- street_norm complet : numero + nom_voie normalisé (pour rétrocompatibilité)
+        norm_street(concat_ws(' ', numero_parsed, nom_voie)) AS street_norm,
+        
+        -- city_norm avec gestion arrondissements
+        normalize_city(nom_commune) AS city_norm,
+        
+        -- adresse_norm unifiée : NUMERO TYPE_VOIE LIBELLE_VOIE (aligné sur SIRENE/RNA)
+        trim(concat_ws(' ', numero_parsed, ban_type(nom_voie_norm), ban_libelle(nom_voie_norm))) AS adresse_norm
+    FROM base
 )
 TO '{out_tmp}' {opts};
 """

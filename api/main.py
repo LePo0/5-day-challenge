@@ -48,7 +48,7 @@ class GoldenRecord(BaseModel):
     """Structure du Golden Record (SIRENE + RNA + BAN)"""
     siret: str
     siren: str
-    nom: Optional[str] = None
+    nom: str                            # 🆕 Unifié (SIRENE ou RNA)
     enseigne: Optional[str] = None
     code_postal: str
     numero_voie: Optional[str] = None
@@ -57,17 +57,16 @@ class GoldenRecord(BaseModel):
     
     # RNA (si association)
     id_rna: Optional[str] = None
-    titre_association: Optional[str] = None
     
     # BAN (géolocalisation)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    geo_score: Optional[float] = None
+    is_ban_validated: bool = False
     
     # Métadonnées
-    etat_administratif: str = "A"  # A=Actif, F=Fermé
+    status: str = "open"                # 🆕 open/closed (plus etat_administratif)
+    nature: str                         # 🆕 ASSOCIATION/COMMERCE/ENTREPRISE
     date_creation: Optional[str] = None
-    date_maj: Optional[str] = None
 
 class SearchResult(BaseModel):
     """Résultat de recherche simplifié"""
@@ -78,6 +77,7 @@ class SearchResult(BaseModel):
     code_postal: Optional[str] = None
     commune: Optional[str] = None
     id_rna: Optional[str] = None
+    nature: str                         # 🆕 ASSOCIATION/COMMERCE/ENTREPRISE
 
 class SearchResponse(BaseModel):
     query: str
@@ -227,23 +227,19 @@ async def get_siret(siret: str):
         SELECT 
             siret,
             siren,
-            COALESCE(nom, '') as nom,
+            nom,
             enseigne,
             code_postal,
             num_voie as numero_voie,
             libelle_voie,
             ville as commune,
             id_rna,
-            rna_titre as titre_association,
             latitude,
             longitude,
-            CASE 
-                WHEN latitude IS NOT NULL THEN 1.0 
-                ELSE NULL 
-            END as geo_score,
-            etat as etat_administratif,
-            CAST(rna_date_creation AS VARCHAR) as date_creation,
-            NULL as date_maj
+            is_ban_validated,
+            status,
+            nature,
+            CAST(rna_date_creation AS VARCHAR) as date_creation
         FROM golden_record
         WHERE siret = ?
     """, [siret]).fetchone()
@@ -257,9 +253,9 @@ async def get_siret(siret: str):
     # Conversion en dictionnaire
     columns = [
         'siret', 'siren', 'nom', 'enseigne', 'code_postal', 
-        'numero_voie', 'libelle_voie', 'commune', 'id_rna', 
-        'titre_association', 'latitude', 'longitude', 'geo_score', 
-        'etat_administratif', 'date_creation', 'date_maj'
+        'numero_voie', 'libelle_voie', 'commune', 'id_rna',
+        'latitude', 'longitude', 'is_ban_validated',
+        'status', 'nature', 'date_creation'
     ]
     data = dict(zip(columns, result))
     
@@ -370,11 +366,12 @@ async def search(
             SELECT 
                 siret,
                 display_name as nom,
-                NULL as enseigne,
+                enseigne,
                 COALESCE(adresse, '') as adresse,
                 COALESCE(code_postal, '') as code_postal,
                 COALESCE(ville, '') as commune,
-                CASE WHEN is_association THEN 'W__' ELSE NULL END as id_rna
+                id_rna,
+                nature
             FROM search_view
             WHERE siret IN ({placeholders})
             LIMIT 10
@@ -400,11 +397,12 @@ async def search(
             SELECT 
                 siret,
                 display_name as nom,
-                NULL as enseigne,
+                enseigne,
                 COALESCE(adresse, '') as adresse,
                 COALESCE(code_postal, '') as code_postal,
                 COALESCE(ville, '') as commune,
-                CASE WHEN is_association THEN 'W__' ELSE NULL END as id_rna
+                id_rna,
+                nature
             FROM search_view
             WHERE {where_sql}
             LIMIT 10
@@ -420,7 +418,8 @@ async def search(
             adresse=row[3],
             code_postal=row[4],
             commune=row[5],
-            id_rna=row[6]
+            id_rna=row[6],
+            nature=row[7]
         ))
     
     return SearchResponse(

@@ -40,11 +40,19 @@ def convert_sirene(con):
     query = f"""
         COPY (
             SELECT 
-                siret, siren, enseigne1Etablissement as enseigne, 
-                denominationUsuelleEtablissement as nom, numeroVoieEtablissement as num_voie,
-                typeVoieEtablissement as type_voie, libelleVoieEtablissement as libelle_voie,
-                codePostalEtablissement as code_postal, libelleCommuneEtablissement as ville,
-                etatAdministratifEtablissement as etat, activitePrincipaleEtablissement as naf
+                siret, siren, 
+                enseigne1Etablissement as enseigne, 
+                denominationUsuelleEtablissement as nom,
+                etatAdministratifEtablissement as etat, 
+                activitePrincipaleEtablissement as naf,
+                -- Colonnes d'adresse complètes pour matching
+                numeroVoieEtablissement as num_voie,
+                indiceRepetitionEtablissement as repetition,
+                typeVoieEtablissement as type_voie,
+                libelleVoieEtablissement as libelle_voie,
+                complementAdresseEtablissement as complement_adresse,
+                codePostalEtablissement as code_postal,
+                libelleCommuneEtablissement as ville
             FROM read_csv('{csv_path}', 
                 delim=',', header=True, auto_detect=True, all_varchar=False,
                 types={{'codePostalEtablissement': 'VARCHAR', 'siret': 'VARCHAR', 'siren': 'VARCHAR'}}
@@ -88,13 +96,19 @@ def convert_rna(con):
     query = f"""
         COPY (
             SELECT 
-                id as id_rna, siret, titre as titre_asso,
-                adrs_codepostal as code_postal, adrs_libcommune as ville,
-                objet, date_creat,
-                -- Ajout colonnes adresse pour matching
+                id as id_rna, 
+                siret, 
+                titre as titre_asso,
+                objet, 
+                date_creat,
+                -- Colonnes adresse complètes pour matching
                 adrs_numvoie as num_voie,
+                adrs_repetition as repetition,
                 adrs_typevoie as type_voie,
-                adrs_libvoie as libelle_voie
+                adrs_libvoie as libelle_voie,
+                adrs_complement as complement_adresse,
+                adrs_codepostal as code_postal,
+                adrs_libcommune as ville
             FROM read_csv({files_sql}, 
                 delim=';', 
                 header=True, 
@@ -117,7 +131,18 @@ def convert_ban(con):
     query = f"""
         COPY (
             SELECT 
-                id, numero, rep, nom_voie, code_postal, nom_commune, lat, lon
+                id, 
+                numero, 
+                rep, 
+                nom_voie, 
+                nom_afnor,
+                code_postal, 
+                nom_commune,
+                lat, 
+                lon,
+                -- Colonnes de qualité pour scoring
+                certification_commune,
+                type_position
             FROM read_csv('{gz_path}', 
                 delim=';', quote='"', header=True, ignore_errors=True,
                 types={{'code_postal': 'VARCHAR', 'numero': 'VARCHAR'}}

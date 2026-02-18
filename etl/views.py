@@ -83,29 +83,55 @@ COPY (
         WHERE rn = 1
     ),
     
-    -- Matching BAN : meilleure adresse par (code_postal, ville norm, rue norm)
-    -- city_norm normalise déjà les arrondissements (Paris/Lyon/Marseille)
+    -- Matching BAN : meilleure adresse par composants standardisés (4 critères)
+    -- Utilise numero_norm, type_voie_norm, libelle_voie_norm, code_postal
+    -- Permet de distinguer "94 BIS RUE DIDOT" vs "94 RUE DIDOT"
     ban_best AS (
         SELECT 
             code_postal,
             city_norm,
-            street_norm,
+            numero_norm,
+            type_voie_norm,
+            libelle_voie_norm,
             AVG(lat) as latitude,
             AVG(lon) as longitude,
+            -- Score qualité BAN (certification + type_position)
+            AVG(
+                CASE 
+                    WHEN certification_commune = 1 THEN 1.0
+                    WHEN certification_commune = 0 THEN 0.5
+                    ELSE 0.5
+                END * 0.6 +
+                CASE type_position
+                    WHEN 'housenumber' THEN 1.0
+                    WHEN 'interpolation' THEN 0.8
+                    WHEN 'street' THEN 0.5
+                    ELSE 0.3
+                END * 0.4
+            ) as geo_quality,
             COUNT(*) as nb_adresses
         FROM '{BAN_SILVER}'
         WHERE lat IS NOT NULL AND lon IS NOT NULL
-        GROUP BY code_postal, city_norm, street_norm
+          AND numero_norm IS NOT NULL
+        GROUP BY code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm
     )
     
     SELECT
         -- Identité SIRENE
         s.siret,
         s.siren,
-        s.nom,
+        
+        -- 🆕 NOM UNIFIÉ : priorité SIRENE nom, fallback RNA titre
+        COALESCE(
+            NULLIF(TRIM(s.nom), ''),
+            NULLIF(TRIM(r.titre_asso), ''),
+            '[SANS NOM]'
+        ) as nom,
+        
+        -- 🆕 ENSEIGNE séparé (nom commercial)
         s.enseigne,
+        
         s.naf,
-        s.etat,
         
         -- Association RNA (si lien existe)
         l.id_rna,
@@ -125,6 +151,7 @@ COPY (
         -- Géolocalisation BAN
         b.latitude,
         b.longitude,
+        b.geo_quality,
         CASE 
             WHEN b.latitude IS NOT NULL THEN true 
             ELSE false 
@@ -134,6 +161,9 @@ COPY (
         s.name_norm,
         s.street_norm,
         s.city_norm,
+        s.numero_norm,
+        s.type_voie_norm,
+        s.libelle_voie_norm,
         
         -- Type d'entité calculé
         CASE 
@@ -142,12 +172,17 @@ COPY (
             ELSE 'ENTREPRISE'
         END as nature,
         
-        -- Statut calculé
+        -- 🆕 Statut calculé (open/closed au lieu de A/F)
         CASE 
             WHEN s.etat = 'A' THEN 'open'
             WHEN s.etat = 'F' THEN 'closed'
             ELSE 'unknown'
-        END as status
+        END as status,
+        
+        -- Champs d'audit (pour traçabilité)
+        s.nom as sirene_nom_original,
+        s.enseigne as sirene_enseigne_original,
+        r.titre_asso as rna_titre_original
         
     FROM '{SIRENE_SILVER}' s
     
@@ -157,11 +192,13 @@ COPY (
     -- Infos RNA (optionnel)
     LEFT JOIN '{RNA_SILVER}' r ON l.id_rna = r.id_rna
     
-    -- Géolocalisation BAN (optionnel, par adresse normalisée)
+    -- Géolocalisation BAN (optionnel, par 4 critères standardisés)
     LEFT JOIN ban_best b 
         ON s.code_postal = b.code_postal 
         AND s.city_norm = b.city_norm
-        AND s.street_norm = b.street_norm
+        AND s.numero_norm = b.numero_norm
+        AND COALESCE(s.type_voie_norm, '') = COALESCE(b.type_voie_norm, '')
+        AND COALESCE(s.libelle_voie_norm, '') = COALESCE(b.libelle_voie_norm, '')
         
     ORDER BY s.siret  -- Tri pour optimiser les lookups SIRET
 )
@@ -203,13 +240,14 @@ COPY (
     SELECT
         siret,
         
-        -- Texte de recherche (tous les noms possibles + adresse + ville)
+        -- 🆕 Texte de recherche (SIRET + noms + adresse + ville)
         COALESCE(
             TRIM(
                 CONCAT_WS(' ',
+                    siret,
                     NULLIF(nom, ''),
                     NULLIF(enseigne, ''),
-                    NULLIF(rna_titre, ''),
+                    NULLIF(rna_titre_original, ''),
                     NULLIF(ville, ''),
                     NULLIF(libelle_voie, '')
                 )
@@ -222,19 +260,20 @@ COPY (
             TRIM(
                 CONCAT_WS(' ',
                     NULLIF(name_norm, ''),
-                    NULLIF(rna_titre, '')
+                    NULLIF(rna_titre_original, '')
                 )
             ),
             ''
         ) as search_text_norm,
         
-        -- Texte minuscule pré-calculé pour recherche rapide (nom + adresse + ville)
+        -- Texte minuscule pré-calculé pour recherche rapide (SIRET + nom + adresse + ville)
         LOWER(COALESCE(
             TRIM(
                 CONCAT_WS(' ',
+                    siret,
                     NULLIF(nom, ''),
                     NULLIF(enseigne, ''),
-                    NULLIF(rna_titre, ''),
+                    NULLIF(rna_titre_original, ''),
                     NULLIF(ville, ''),
                     NULLIF(libelle_voie, '')
                 )
@@ -256,8 +295,12 @@ COPY (
         code_postal,
         ville,
         
+        -- 🆕 RNA ID pour retour dans résultats
+        id_rna,
+        
         -- Métadonnées pour affichage
-        COALESCE(nom, enseigne, rna_titre, '[SANS NOM]') as display_name,
+        COALESCE(nom, enseigne, '[SANS NOM]') as display_name,
+        enseigne,
         nature,
         status,
         
@@ -502,8 +545,10 @@ def create_fts_sqlite() -> None:
             code_postal,
             ville,
             display_name,
+            enseigne,
             nature,
-            is_association
+            is_association,
+            id_rna
         FROM '{SEARCH_VIEW}'
         WHERE search_text IS NOT NULL AND search_text != ''
     """).df()
@@ -521,8 +566,10 @@ def create_fts_sqlite() -> None:
             code_postal UNINDEXED,
             ville UNINDEXED,
             display_name UNINDEXED,
+            enseigne UNINDEXED,
             nature UNINDEXED,
             is_association UNINDEXED,
+            id_rna UNINDEXED,
             tokenize='porter unicode61 remove_diacritics 1'
         )
     """)
