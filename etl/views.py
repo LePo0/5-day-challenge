@@ -84,17 +84,18 @@ COPY (
     ),
     
     -- Matching BAN : meilleure adresse par (code_postal, ville norm, rue norm)
+    -- city_norm normalise déjà les arrondissements (Paris/Lyon/Marseille)
     ban_best AS (
         SELECT 
             code_postal,
-            nom_commune,
+            city_norm,
             street_norm,
             AVG(lat) as latitude,
             AVG(lon) as longitude,
             COUNT(*) as nb_adresses
         FROM '{BAN_SILVER}'
         WHERE lat IS NOT NULL AND lon IS NOT NULL
-        GROUP BY code_postal, nom_commune, street_norm
+        GROUP BY code_postal, city_norm, street_norm
     )
     
     SELECT
@@ -159,7 +160,7 @@ COPY (
     -- Géolocalisation BAN (optionnel, par adresse normalisée)
     LEFT JOIN ban_best b 
         ON s.code_postal = b.code_postal 
-        AND s.city_norm = b.nom_commune
+        AND s.city_norm = b.city_norm
         AND s.street_norm = b.street_norm
         
     ORDER BY s.siret  -- Tri pour optimiser les lookups SIRET

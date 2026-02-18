@@ -25,6 +25,18 @@ con = None  # DuckDB
 fts_con = None  # SQLite FTS5
 stats_cache = {}  # Cache des stats en RAM
 
+# ---------------------------
+# MODE DEV / PROD
+# ---------------------------
+DEV = os.getenv("DEV", "0") == "1"
+DEV_SAMPLE_PCT = int(os.getenv("DEV_SAMPLE_PCT", "1"))
+DEV_LIMIT = int(os.getenv("DEV_LIMIT", "0"))
+
+PROD_CODEC = os.getenv("PROD_CODEC", "ZSTD")  # ZSTD / SNAPPY / GZIP / "" (none)
+THREADS = int(os.getenv("DUCKDB_THREADS", "8"))
+MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
+
+
 # Models
 
 class PingResponse(BaseModel):
@@ -113,8 +125,8 @@ async def startup_event():
     
     # Connexion au catalog.db (tables et index déjà créés par views.py)
     con = duckdb.connect(str(CATALOG_DB), read_only=True)
-    con.execute("SET threads = 4")
-    con.execute("SET memory_limit = '4GB'")
+    con.execute(f"SET threads = {THREADS}")
+    con.execute(f"SET memory_limit = '{MEMORY_LIMIT}'")
     
     print("✅ Connexion au catalog.db (avec index pré-construits)")
     
@@ -254,6 +266,39 @@ async def get_siret(siret: str):
     return GoldenRecord(**data)
 
 
+# ==================== Helpers ====================
+
+def escape_fts5(text: str) -> str:
+    """
+    Échappe les caractères spéciaux pour FTS5
+    
+    Caractères problématiques : " ' ( ) [ ] { } * : ^
+    
+    Args:
+        text: Texte à échapper
+    
+    Returns:
+        Texte nettoyé et sécurisé pour FTS5
+    
+    Examples:
+        >>> escape_fts5("VILLE D'AVRAY")
+        'VILLE D AVRAY'
+        >>> escape_fts5('ASSOCIATION "SECOURS" POPULAIRE')
+        'ASSOCIATION SECOURS POPULAIRE'
+    """
+    # Supprimer les caractères spéciaux FTS5
+    special_chars = ['"', "'", '(', ')', '[', ']', '{', '}', '*', ':', '^']
+    for char in special_chars:
+        text = text.replace(char, ' ')
+    
+    # Nettoyer les espaces multiples
+    text = ' '.join(text.split())
+    
+    return text
+
+
+# ==================== Endpoints ====================
+
 @app.get("/api/v1/search", response_model=SearchResponse, tags=["Search"])
 async def search(
     q: Optional[str] = Query(None, description="Texte à chercher (nom ou enseigne)"),
@@ -286,19 +331,32 @@ async def search(
         # === RECHERCHE FTS5 (< 100ms) ===
         cursor = fts_con.cursor()
         
+        # Échapper les caractères spéciaux FTS5
+        q_escaped = escape_fts5(q)
+        
+        # Vérifier que la requête n'est pas vide après nettoyage
+        if not q_escaped.strip():
+            raise HTTPException(
+                status_code=400, 
+                detail="Query invalide après nettoyage (caractères spéciaux uniquement)"
+            )
+        
+        # Ajouter wildcards pour recherche partielle
+        fts_query = ' '.join([f'{word}*' for word in q_escaped.split()])
+        
         # Construire la requête FTS
         if postal_code:
             cursor.execute("""
                 SELECT siret FROM search_fts 
                 WHERE search_fts MATCH ? AND code_postal = ?
                 LIMIT 50
-            """, (q, postal_code))
+            """, (fts_query, postal_code))
         else:
             cursor.execute("""
                 SELECT siret FROM search_fts 
                 WHERE search_fts MATCH ?
                 LIMIT 50
-            """, (q,))
+            """, (fts_query,))
         
         # Récupérer les SIRETs matchés
         sirets = [row[0] for row in cursor.fetchall()]
