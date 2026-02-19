@@ -125,9 +125,12 @@ function ResultsArea() {
                                     <Typography variant="subtitle1" fontWeight="bold">
                                         {result.name}
                                     </Typography>
-                                    {result.is_association && (
-                                        <Chip label="Association" color="success" size="small" />
-                                    )}
+                                    <Chip
+                                        label={result.is_association ? "Association" : "Entreprise"}
+                                        color={result.is_association ? "success" : "primary"}
+                                        size="small"
+                                        icon={result.is_association ? <Group /> : <Business />}
+                                    />
                                 </Box>
 
                                 <Typography variant="body2" color="text.secondary" gutterBottom>

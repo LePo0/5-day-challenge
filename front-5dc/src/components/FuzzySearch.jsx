@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { Box, TextField, Button, Typography, Alert, Chip } from '@mui/material';
+import { Box, TextField, Button, Typography, Alert } from '@mui/material';
 import { Search } from '@mui/icons-material';
 import useStore from '../store/useStore';
 import apiClient from '../api/apiClient';
-import mockApiClient from '../api/mockApiClient';
 
 function FuzzySearch() {
     const [query, setQuery] = useState('');
@@ -14,7 +13,6 @@ function FuzzySearch() {
     const setError = useStore((state) => state.setError);
     const showToast = useStore((state) => state.showToast);
     const loading = useStore((state) => state.loading);
-    const mockMode = useStore((state) => state.mockMode);
 
     const handlePostalCodeChange = (e) => {
         const value = e.target.value.replace(/\D/g, '').slice(0, 5);
@@ -29,8 +27,7 @@ function FuzzySearch() {
         try {
             // Extract department code (first 2 digits) from postal code
             const dept = postalCode.length >= 2 ? postalCode.substring(0, 2) : '';
-            const client = mockMode ? mockApiClient : apiClient;
-            const data = await client.search(query, dept);
+            const data = await apiClient.search(query, dept);
             setResults(data);
             showToast('success', `${data.count || 0} résultat(s) trouvé(s)`);
         } catch (error) {
@@ -42,13 +39,6 @@ function FuzzySearch() {
     };
 
     const isValid = query.trim() !== '' || postalCode !== '';
-
-    // Exemples disponibles en mode mock
-    const mockExamples = [
-        { query: 'boulangerie', dept: '69', label: 'Boulangeries Rhône' },
-        { query: 'club tennis', dept: '69', label: 'Clubs Tennis Rhône' },
-        { query: 'croix rouge', dept: '75', label: 'Croix Rouge Paris' }
-    ];
 
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -64,29 +54,6 @@ function FuzzySearch() {
                     Retourne 10 résultats maximum, triés par pertinence.
                 </Typography>
             </Alert>
-
-            {mockMode && (
-                <Alert severity="info" sx={{ borderRadius: 2 }}>
-                    <Typography variant="subtitle2" gutterBottom>
-                        Mode Mock - Exemples disponibles :
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
-                        {mockExamples.map(({ query: q, dept, label }) => (
-                            <Chip
-                                key={`${q}-${dept}`}
-                                label={label}
-                                size="small"
-                                clickable
-                                onClick={() => {
-                                    setQuery(q);
-                                    setPostalCode(dept + '000');
-                                }}
-                                color={query === q ? 'primary' : 'default'}
-                            />
-                        ))}
-                    </Box>
-                </Alert>
-            )}
 
             <TextField
                 fullWidth

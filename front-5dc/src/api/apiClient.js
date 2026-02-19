@@ -49,7 +49,7 @@ async function apiRequest(endpoint, options = {}, timeout = 10000) {
 
         if (error.message.includes('fetch')) {
             console.error(`Erreur de connexion [${endpoint}]:`, error);
-            throw new Error('Impossible de se connecter au serveur. Vérifiez qu\'il est démarré sur http://localhost:8000');
+            throw new Error('Impossible de se connecter au serveur. Vérifiez qu\'il est démarré');
         }
 
         console.error(`Erreur API [${endpoint}]:`, error);
