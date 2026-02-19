@@ -31,14 +31,14 @@ if result:
 else:
     print(f"❌ PAS TROUVÉ dans golden_record\n")
 
-# 2. Recherche dans SIRENE Silver
+# 2. Recherche dans SIRENE Bronze
 print(f"\n{'='*80}")
-print("📄 SIRENE SILVER (données brutes)")
+print("📄 SIRENE BRONZE (données source)")
 print("-" * 80)
 
 result_sirene = con.execute(f"""
     SELECT *
-    FROM 'data_parquet/sirene_silver.parquet'
+    FROM 'data_parquet/sirene.parquet'
     WHERE siret = '{SIRET}'
 """).fetchone()
 
@@ -48,7 +48,7 @@ if result_sirene:
     for col, val in zip(cols, result_sirene):
         print(f"  {col:25} : {val}")
 else:
-    print(f"❌ PAS TROUVÉ dans sirene_silver\n")
+    print(f"❌ PAS TROUVÉ dans sirene.parquet\n")
 
 # 3. Diagnostic BAN matching
 if result:
@@ -65,15 +65,15 @@ if result:
             s.type_voie_norm,
             s.libelle_voie_norm,
             b.city_norm AS ban_city,
-            b.latitude,
-            b.longitude,
+            b.lat,
+            b.lon,
             b.geo_quality
         FROM 'data_parquet/sirene_silver.parquet' s
         LEFT JOIN (
             SELECT 
                 code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm,
-                ANY_VALUE(latitude) AS latitude,
-                ANY_VALUE(longitude) AS longitude,
+                ANY_VALUE(lat) AS lat,
+                ANY_VALUE(lon) AS lon,
                 MAX(geo_quality) AS geo_quality
             FROM 'data_parquet/ban_silver.parquet'
             GROUP BY code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm
@@ -94,7 +94,7 @@ if result:
         
         for col, val in zip(cols, ban_check):
             marker = "✅" if val else "❌"
-            if col in ['latitude', 'longitude', 'geo_quality']:
+            if col in ['lat', 'lon', 'geo_quality']:
                 marker = "✅" if val else "⚠️ "
             print(f"  {marker} {col:<25} : {val}")
         
@@ -119,15 +119,15 @@ if result:
         SELECT 
             s.code_postal,
             b.city_norm AS ban_city,
-            b.latitude,
-            b.longitude,
+            b.lat,
+            b.lon,
             b.geo_quality
         FROM 'data_parquet/sirene_silver.parquet' s
         LEFT JOIN (
             SELECT 
                 code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm,
-                ANY_VALUE(latitude) AS latitude,
-                ANY_VALUE(longitude) AS longitude,
+                ANY_VALUE(lat) AS lat,
+                ANY_VALUE(lon) AS lon,
                 MAX(geo_quality) AS geo_quality
             FROM 'data_parquet/ban_silver.parquet'
             GROUP BY code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm

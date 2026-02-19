@@ -17,8 +17,8 @@ GOLDEN_RECORD = os.path.join(PARQUET_DIR, "golden_record.parquet")
 SEARCH_VIEW = os.path.join(PARQUET_DIR, "search_view.parquet")
 STATS_VIEW = os.path.join(PARQUET_DIR, "stats_view.parquet")
 
-THREADS = int(os.getenv("DUCKDB_THREADS", "8"))
-MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
+THREADS = int(os.getenv("DUCKDB_THREADS", "4"))  # Réduit pour économiser RAM
+MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "12GB")  # Augmenté pour views
 
 DEV = os.getenv("DEV", "0") == "1"
 PROD_CODEC = os.getenv("PROD_CODEC", "ZSTD")
@@ -788,6 +788,10 @@ def main() -> None:
     con.execute(f"SET threads = {THREADS}")
     con.execute(f"SET memory_limit = '{MEMORY_LIMIT}'")
     con.execute("SET preserve_insertion_order = false")
+    con.execute("SET temp_directory = './temp_duckdb'")
+    con.execute("PRAGMA max_temp_directory_size = '100GB'")
+    
+    log(f"Configuration: {THREADS} threads, {MEMORY_LIMIT} RAM")
     
     try:
         # 1. Génération des 3 vues
