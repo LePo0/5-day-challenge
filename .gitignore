@@ -44,3 +44,4 @@ venv/
 # Test outputs
 tests/test_output/
 tests/__pycache__/
+duckdb/*.db
