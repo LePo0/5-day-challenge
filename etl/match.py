@@ -29,6 +29,58 @@ def main() -> None:
     log("MATCH SIRENE ↔ RNA : création table de liens (VERSION OPTIMISÉE)")
 
     # =========================================================================
+    # ÉTAPE 0 : CHARGEMENT + INDEXATION (CRUCIAL POUR PERFORMANCE)
+    # =========================================================================
+    log("0) Chargement données + indexation...")
+    
+    # Charger SIRENE actifs en table temporaire avec filtres
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE sirene_active AS
+        SELECT 
+            siret, 
+            code_postal, 
+            numero_norm, 
+            type_voie_norm, 
+            libelle_voie_norm,
+            name_norm
+        FROM read_parquet('{SIRENE_SILVER}')
+        WHERE code_postal IS NOT NULL 
+          AND length(code_postal) = 5
+          AND numero_norm IS NOT NULL 
+          AND numero_norm != '';
+    """)
+    
+    # INDEX CRUCIAL : permet JOIN rapide sur (code_postal, numero_norm)
+    con.execute("CREATE INDEX idx_sirene_cp_num ON sirene_active(code_postal, numero_norm);")
+    
+    sirene_count = con.execute("SELECT count(*) FROM sirene_active").fetchone()[0]
+    log(f"   SIRENE actifs indexés: {sirene_count:,}")
+    
+    # Charger RNA en table temporaire
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE rna_active AS
+        SELECT 
+            siret as rna_siret,
+            id_rna, 
+            code_postal, 
+            numero_norm, 
+            type_voie_norm, 
+            libelle_voie_norm,
+            title_norm
+        FROM read_parquet('{RNA_SILVER}')
+        WHERE code_postal IS NOT NULL 
+          AND length(code_postal) = 5
+          AND numero_norm IS NOT NULL 
+          AND numero_norm != '';
+    """)
+    
+    # INDEX CRUCIAL (même clé composite)
+    con.execute("CREATE INDEX idx_rna_cp_num ON rna_active(code_postal, numero_norm);")
+    
+    rna_count = con.execute("SELECT count(*) FROM rna_active").fetchone()[0]
+    log(f"   RNA actifs indexés: {rna_count:,}")
+
+    # =========================================================================
     # ÉTAPE 1 : EXACT MATCH sur SIRET
     # =========================================================================
     log("1) EXACT SIRET match...")
@@ -52,12 +104,12 @@ def main() -> None:
     log(f"   Exact matches: {exact_count:,}")
 
     # =========================================================================
-    # ÉTAPE 2 : ADDRESS MATCH en 2 PHASES (OPTIMISÉ)
+    # ÉTAPE 2 : ADDRESS MATCH en 2 PHASES (AVEC INDEX - RAPIDE)
     # =========================================================================
-    log("2) ADDRESS MATCH (2 phases : adresse puis bonus nom)...")
+    log("2) ADDRESS MATCH (avec index sur code_postal + numero_norm)...")
     
     # -------------------------------------------------------------------------
-    # PHASE A : Match sur ADRESSE UNIQUEMENT (RAPIDE - sans editdist3 sur nom)
+    # PHASE A : Match sur ADRESSE (maintenant RAPIDE avec index)
     # -------------------------------------------------------------------------
     log("   Phase A: Candidats sur adresse...")
     
@@ -68,13 +120,10 @@ def main() -> None:
             r.id_rna,
             s.name_norm,
             r.title_norm,
-            -- Score ADRESSE basé sur composants (SANS editdist3 sur nom)
+            -- Score ADRESSE basé sur composants
+            -- numero_norm déjà égal (JOIN condition), donc +0.30 automatique
             (
-                CASE
-                    WHEN COALESCE(s.numero_norm, '') = COALESCE(r.numero_norm, '') 
-                         AND s.numero_norm IS NOT NULL AND s.numero_norm != '' THEN 0.30
-                    ELSE 0.0
-                END +
+                0.30 +  -- numero match (garanti par JOIN)
                 CASE
                     WHEN COALESCE(s.type_voie_norm, '') = COALESCE(r.type_voie_norm, '') THEN 0.25
                     ELSE 0.0
@@ -90,18 +139,12 @@ def main() -> None:
                     )::DOUBLE))
                 END
             ) AS score_adresse
-        FROM read_parquet(?) s
-        INNER JOIN read_parquet(?) r
+        FROM sirene_active s
+        INNER JOIN rna_active r
             ON s.code_postal = r.code_postal
-            AND COALESCE(s.numero_norm, '') = COALESCE(r.numero_norm, '')
-        WHERE s.siret NOT IN (SELECT siret FROM link_exact)
-          AND s.numero_norm IS NOT NULL 
-          AND s.numero_norm != ''
-          AND r.numero_norm IS NOT NULL
-          AND r.numero_norm != ''
-          AND length(s.code_postal) = 5
-          AND length(r.code_postal) = 5;
-    """, [SIRENE_SILVER, RNA_SILVER])
+            AND s.numero_norm = r.numero_norm  -- ← RAPIDE avec index
+        WHERE s.siret NOT IN (SELECT siret FROM link_exact);
+    """)
 
     candidates_base = con.execute("SELECT count(*) FROM candidates_address_base").fetchone()[0]
     log(f"      {candidates_base:,} candidats (adresse seule)")
