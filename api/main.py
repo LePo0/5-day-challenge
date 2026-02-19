@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -44,46 +45,67 @@ class PingResponse(BaseModel):
     timestamp: str
     latency_ms: float
 
-class GoldenRecord(BaseModel):
-    """Structure du Golden Record (SIRENE + RNA + BAN)"""
+class ErrorResponse(BaseModel):
+    """Format d'erreur standardisé selon l'énoncé"""
+    error: str
+    message: str
+
+# GET /siret/{siret} - Structure imbriquée selon énoncé
+class Identity(BaseModel):
     siret: str
-    siren: str
-    nom: str                            # 🆕 Unifié (SIRENE ou RNA)
+    nom_raison_sociale: str
     enseigne: Optional[str] = None
-    code_postal: str
-    numero_voie: Optional[str] = None
-    libelle_voie: Optional[str] = None
-    commune: str
-    
-    # RNA (si association)
+    categorie_entreprise: Optional[str] = None
+
+class AssoId(BaseModel):
     id_rna: Optional[str] = None
-    
-    # BAN (géolocalisation)
+    date_publication_jo: Optional[str] = None
+
+class Location(BaseModel):
+    numero_voie: Optional[str] = None
+    type_voie: Optional[str] = None
+    libelle_voie: Optional[str] = None
+    code_postal: str
+    commune: str
+    geo_score: Optional[float] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    is_ban_validated: bool = False
-    
-    # Métadonnées
-    status: str = "open"                # 🆕 open/closed (plus etat_administratif)
-    nature: str                         # 🆕 ASSOCIATION/COMMERCE/ENTREPRISE
-    date_creation: Optional[str] = None
 
+class GoldenRecord(BaseModel):
+    """Structure du Golden Record selon énoncé"""
+    identity: Identity
+    asso_id: AssoId
+    location: Location
+
+# GET /search - Structure selon énoncé
 class SearchResult(BaseModel):
-    """Résultat de recherche simplifié"""
     siret: str
-    nom: str
-    enseigne: Optional[str] = None
-    adresse: Optional[str] = None
-    code_postal: Optional[str] = None
-    commune: Optional[str] = None
-    id_rna: Optional[str] = None
-    nature: str                         # 🆕 ASSOCIATION/COMMERCE/ENTREPRISE
+    name: str
+    is_association: bool
+    city: str
 
 class SearchResponse(BaseModel):
     query: str
-    postal_code: Optional[str] = None
+    filter_dept: Optional[str] = None
     count: int
     results: List[SearchResult]
+
+# GET /stats/{code_postal} - Structure selon énoncé
+class Repartition(BaseModel):
+    entreprises_pures: int
+    associations: int
+    etablissements_fermes: int
+
+class TopNaf(BaseModel):
+    code: Optional[str] = None
+    libelle: Optional[str] = None
+    count: int
+
+class StatsResponse(BaseModel):
+    zone: str
+    total_entites: int
+    repartition: Repartition
+    top_naf: TopNaf
 
 # ==================== Application ====================
 
@@ -91,8 +113,6 @@ app = FastAPI(
     title="Challenge ETL API",
     description="API unifiée SIRENE + RNA + BAN",
     version="1.0.0",
-    docs_url="/api/v1/docs",
-    redoc_url="/api/v1/redoc"
 )
 
 # CORS pour le frontend React sur port 5173 (Vite)
@@ -197,7 +217,7 @@ async def ping():
     )
 
 
-@app.get("/api/v1/siret/{siret}", response_model=GoldenRecord, tags=["Entities"])
+@app.get("/api/v1/siret/{siret}", response_model=GoldenRecord, tags=["Entities"], responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}})
 async def get_siret(siret: str):
     """
     Récupération du Golden Record d'un établissement
@@ -206,9 +226,9 @@ async def get_siret(siret: str):
     - `siret` : 14 chiffres (SIREN 9 + NIC 5)
     
     **Retourne :**
-    - Données SIRENE (identité légale)
-    - Données RNA (si association)
-    - Données BAN (géolocalisation)
+    - identity : Données SIRENE (identité légale)
+    - asso_id : Données RNA (si association)
+    - location : Données BAN (géolocalisation)
     
     **Codes HTTP :**
     - 200 : Succès
@@ -217,9 +237,12 @@ async def get_siret(siret: str):
     """
     # Validation format SIRET
     if len(siret) != 14 or not siret.isdigit():
-        raise HTTPException(
+        return JSONResponse(
             status_code=400,
-            detail="SIRET invalide : doit contenir exactement 14 chiffres"
+            content={
+                "error": "INVALID_FORMAT",
+                "message": "Le siret doit contenir 14 chiffres."
+            }
         )
     
     # Requête dans golden_record (table avec index dans catalog.db)
@@ -230,36 +253,60 @@ async def get_siret(siret: str):
             nom,
             enseigne,
             code_postal,
-            num_voie as numero_voie,
+            num_voie,
+            type_voie,
             libelle_voie,
-            ville as commune,
+            ville,
             id_rna,
             latitude,
             longitude,
-            is_ban_validated,
-            status,
-            nature,
-            CAST(rna_date_creation AS VARCHAR) as date_creation
+            geo_quality,
+            CAST(rna_date_creation AS VARCHAR) as date_creation,
+            status
         FROM golden_record
         WHERE siret = ?
     """, [siret]).fetchone()
     
     if not result:
-        raise HTTPException(
+        return JSONResponse(
             status_code=404,
-            detail=f"SIRET {siret} introuvable dans la base de données"
+            content={
+                "error": "SIRET_NOT_FOUND",
+                "message": f"Le siret {siret} est inconnu."
+            }
         )
     
-    # Conversion en dictionnaire
-    columns = [
-        'siret', 'siren', 'nom', 'enseigne', 'code_postal', 
-        'numero_voie', 'libelle_voie', 'commune', 'id_rna',
-        'latitude', 'longitude', 'is_ban_validated',
-        'status', 'nature', 'date_creation'
-    ]
-    data = dict(zip(columns, result))
+    # Extraction des valeurs
+    (siret_val, siren_val, nom, enseigne, code_postal, num_voie, type_voie,
+     libelle_voie, ville, id_rna, latitude, longitude, geo_quality, 
+     date_creation, status) = result
     
-    return GoldenRecord(**data)
+    # Calcul de categorie_entreprise (simplifié)
+    categorie = "PME"  # Par défaut, pourrait être enrichi avec effectifs
+    
+    # Construction de la réponse structurée
+    return GoldenRecord(
+        identity=Identity(
+            siret=siret_val,
+            nom_raison_sociale=nom or "[SANS NOM]",
+            enseigne=enseigne,
+            categorie_entreprise=categorie
+        ),
+        asso_id=AssoId(
+            id_rna=id_rna,
+            date_publication_jo=date_creation
+        ),
+        location=Location(
+            numero_voie=num_voie,
+            type_voie=type_voie,
+            libelle_voie=libelle_voie,
+            code_postal=code_postal,
+            commune=ville or "[COMMUNE INCONNUE]",
+            geo_score=round(geo_quality, 2) if geo_quality else None,
+            latitude=round(latitude, 4) if latitude else None,
+            longitude=round(longitude, 4) if longitude else None
+        )
+    )
 
 
 # ==================== Helpers ====================
@@ -295,17 +342,17 @@ def escape_fts5(text: str) -> str:
 
 # ==================== Endpoints ====================
 
-@app.get("/api/v1/search", response_model=SearchResponse, tags=["Search"])
+@app.get("/api/v1/search", response_model=SearchResponse, tags=["Search"], responses={400: {"model": ErrorResponse}})
 async def search(
     q: Optional[str] = Query(None, description="Texte à chercher (nom ou enseigne)"),
-    postal_code: Optional[str] = Query(None, description="Code postal (5 chiffres)")
+    dept: Optional[str] = Query(None, description="Code département (2 chiffres)")
 ):
     """
     Recherche géographique et textuelle
     
     **Paramètres :**
     - `q` : Texte libre (nom, enseigne, RNA)
-    - `postal_code` : Code postal exact (5 chiffres)
+    - `dept` : Code département (2 chiffres)
     
     **Retour :**
     - Maximum 10 résultats
@@ -315,11 +362,14 @@ async def search(
     - 200 : Succès (même si 0 résultat)
     - 400 : Paramètre invalide
     """
-    # Validation code postal
-    if postal_code and (len(postal_code) != 5 or not postal_code.isdigit()):
-        raise HTTPException(
+    # Validation département
+    if dept and (len(dept) not in [2, 3] or not dept.isdigit()):
+        return JSONResponse(
             status_code=400,
-            detail="Code postal invalide : doit contenir exactement 5 chiffres"
+            content={
+                "error": "INVALID_FORMAT",
+                "message": f"Le code département doit contenir 2 ou 3 chiffres (reçu: {dept})"
+            }
         )
     
     # STRATÉGIE OPTIMISÉE : FTS5 si recherche textuelle, sinon DuckDB
@@ -332,21 +382,24 @@ async def search(
         
         # Vérifier que la requête n'est pas vide après nettoyage
         if not q_escaped.strip():
-            raise HTTPException(
-                status_code=400, 
-                detail="Query invalide après nettoyage (caractères spéciaux uniquement)"
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "INVALID_FORMAT",
+                    "message": "Query invalide après nettoyage (caractères spéciaux uniquement)"
+                }
             )
         
         # Ajouter wildcards pour recherche partielle
         fts_query = ' '.join([f'{word}*' for word in q_escaped.split()])
         
-        # Construire la requête FTS
-        if postal_code:
+        # Construire la requête FTS avec filtre département
+        if dept:
             cursor.execute("""
                 SELECT siret FROM search_fts 
-                WHERE search_fts MATCH ? AND code_postal = ?
+                WHERE search_fts MATCH ? AND code_postal LIKE ?
                 LIMIT 50
-            """, (fts_query, postal_code))
+            """, (fts_query, f"{dept}%"))
         else:
             cursor.execute("""
                 SELECT siret FROM search_fts 
@@ -358,20 +411,16 @@ async def search(
         sirets = [row[0] for row in cursor.fetchall()]
         
         if not sirets:
-            return SearchResponse(query=q, postal_code=postal_code, count=0, results=[])
+            return SearchResponse(query=q, filter_dept=dept, count=0, results=[])
         
         # Enrichir avec les données DuckDB
         placeholders = ','.join(['?' for _ in sirets])
         results = con.execute(f"""
             SELECT 
                 siret,
-                display_name as nom,
-                enseigne,
-                COALESCE(adresse, '') as adresse,
-                COALESCE(code_postal, '') as code_postal,
-                COALESCE(ville, '') as commune,
-                id_rna,
-                nature
+                display_name as name,
+                COALESCE(ville, '') as city,
+                id_rna
             FROM search_view
             WHERE siret IN ({placeholders})
             LIMIT 10
@@ -382,9 +431,9 @@ async def search(
         where_clauses = []
         params = []
         
-        if postal_code:
-            where_clauses.append("code_postal = ?")
-            params.append(postal_code)
+        if dept:
+            where_clauses.append("code_postal LIKE ?")
+            params.append(f"{dept}%")
         
         if q:
             where_clauses.append("search_text_lower LIKE ?")
@@ -396,13 +445,9 @@ async def search(
         results = con.execute(f"""
             SELECT 
                 siret,
-                display_name as nom,
-                enseigne,
-                COALESCE(adresse, '') as adresse,
-                COALESCE(code_postal, '') as code_postal,
-                COALESCE(ville, '') as commune,
-                id_rna,
-                nature
+                display_name as name,
+                COALESCE(ville, '') as city,
+                id_rna
             FROM search_view
             WHERE {where_sql}
             LIMIT 10
@@ -413,64 +458,79 @@ async def search(
     for row in results:
         search_results.append(SearchResult(
             siret=row[0],
-            nom=row[1],
-            enseigne=row[2],
-            adresse=row[3],
-            code_postal=row[4],
-            commune=row[5],
-            id_rna=row[6],
-            nature=row[7]
+            name=row[1],
+            is_association=(row[3] is not None),
+            city=row[2]
         ))
     
     return SearchResponse(
         query=q or "",
-        postal_code=postal_code,
+        filter_dept=dept,
         count=len(search_results),
         results=search_results
     )
 
 
-@app.get("/api/v1/stats/{code_postal}", tags=["Statistics"])
+@app.get("/api/v1/stats/{code_postal}", response_model=StatsResponse, tags=["Statistics"], responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}})
 async def get_stats(code_postal: str):
     """
-    Statistiques par code postal (BONUS)
+    Statistiques par code postal
     
     **Paramètres :**
     - `code_postal` : Code postal (5 chiffres)
     
     **Retourne :**
-    - Nombre d'entreprises
-    - Nombre d'associations
-    - Top 5 des codes NAF
-    
-    **Note :** Endpoint optionnel pour bonus
+    - zone : Code postal
+    - total_entites : Nombre total d'établissements
+    - repartition : Détail entreprises/associations/fermés
+    - top_naf : Code NAF le plus fréquent avec libellé
     """
     if len(code_postal) != 5 or not code_postal.isdigit():
-        raise HTTPException(
+        return JSONResponse(
             status_code=400,
-            detail="Code postal invalide : doit contenir exactement 5 chiffres"
+            content={
+                "error": "INVALID_FORMAT",
+                "message": f"Le code postal doit contenir 5 chiffres (reçu: {code_postal})"
+            }
         )
     
     # Lookup O(1) dans le cache stats
     if code_postal not in stats_cache:
-        raise HTTPException(
+        return JSONResponse(
             status_code=404,
-            detail=f"Code postal {code_postal} introuvable dans la base"
+            content={
+                "error": "ZONE_NOT_FOUND",
+                "message": f"Le code postal {code_postal} est inconnu."
+            }
         )
     
     stats = stats_cache[code_postal]
     
-    # Construction de la réponse (mapping des noms de colonnes)
-    return {
-        "code_postal": code_postal,
-        "total_etablissements": int(stats["total_entites"]),
-        "total_actifs": int(stats["total_active"]),
-        "total_associations": int(stats["total_associations"]),
-        "top_naf": {
-            "code": stats.get("top_naf_code"),
-            "count": int(stats.get("top_naf_count", 0)) if stats.get("top_naf_count") else 0
-        }
-    }
+    # Calcul de la répartition
+    total_entites = int(stats["total_entites"])
+    total_associations = int(stats["total_associations"])
+    total_fermes = int(stats.get("total_fermees", 0))  # Colonne = total_fermees dans stats_view
+    entreprises_pures = total_entites - total_associations
+    
+    # Mapping NAF code -> libellé (simplifié, devrait être enrichi avec table NAF)
+    naf_code = stats.get("top_naf_code")
+    naf_libelle = None  # Pourrait être enrichi avec une vraie table de référence NAF
+    
+    # Construction de la réponse structurée selon énoncé
+    return StatsResponse(
+        zone=code_postal,
+        total_entites=total_entites,
+        repartition=Repartition(
+            entreprises_pures=entreprises_pures,
+            associations=total_associations,
+            etablissements_fermes=total_fermes
+        ),
+        top_naf=TopNaf(
+            code=naf_code,
+            libelle=naf_libelle,
+            count=int(stats.get("top_naf_count", 0)) if stats.get("top_naf_count") else 0
+        )
+    )
 
 
 # ==================== Point d'entrée ====================

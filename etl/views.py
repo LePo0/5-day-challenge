@@ -93,10 +93,11 @@ COPY (
             numero_norm,
             type_voie_norm,
             libelle_voie_norm,
-            AVG(lat) as latitude,
-            AVG(lon) as longitude,
-            -- Score qualité BAN (certification + type_position)
-            AVG(
+            -- Optimisation : ANY_VALUE() au lieu de AVG() (plus rapide, même résultat pour adresses identiques)
+            ANY_VALUE(lat) as latitude,
+            ANY_VALUE(lon) as longitude,
+            -- Score qualité BAN : MAX pour prendre la meilleure qualité disponible
+            MAX(
                 CASE 
                     WHEN certification_commune = 1 THEN 1.0
                     WHEN certification_commune = 0 THEN 0.5
@@ -108,8 +109,7 @@ COPY (
                     WHEN 'street' THEN 0.5
                     ELSE 0.3
                 END * 0.4
-            ) as geo_quality,
-            COUNT(*) as nb_adresses
+            ) as geo_quality
         FROM '{BAN_SILVER}'
         WHERE lat IS NOT NULL AND lon IS NOT NULL
           AND numero_norm IS NOT NULL
@@ -121,12 +121,16 @@ COPY (
         s.siret,
         s.siren,
         
-        -- 🆕 NOM UNIFIÉ : priorité SIRENE nom, fallback RNA titre
-        COALESCE(
-            NULLIF(TRIM(s.nom), ''),
-            NULLIF(TRIM(r.titre_asso), ''),
-            '[SANS NOM]'
-        ) as nom,
+        -- 🆕 NOM UNIFIÉ avec priorité RNA (si association) → SIRENE nom → SIRENE enseigne
+        CASE 
+            WHEN r.titre_asso IS NOT NULL AND TRIM(r.titre_asso) != '' 
+            THEN TRIM(r.titre_asso)
+            ELSE COALESCE(
+                NULLIF(TRIM(s.nom), ''),
+                NULLIF(TRIM(s.enseigne), ''),
+                '[SANS NOM]'
+            )
+        END as nom,
         
         -- 🆕 ENSEIGNE séparé (nom commercial)
         s.enseigne,
@@ -555,8 +559,15 @@ def create_fts_sqlite() -> None:
     
     log(f"  {len(df):,} lignes à indexer")
     
-    # Créer la base SQLite avec FTS5
+    # Créer la base SQLite avec FTS5 + optimisations PRAGMA
     con_sqlite = sqlite3.connect(SQLITE_FTS)
+    
+    # Optimisations SQLite : mode rapide sans garanties ACID (fichier temporaire)
+    con_sqlite.execute("PRAGMA journal_mode=OFF")
+    con_sqlite.execute("PRAGMA synchronous=OFF")
+    con_sqlite.execute("PRAGMA cache_size=1000000")  # 1M pages = ~4GB cache
+    con_sqlite.execute("PRAGMA locking_mode=EXCLUSIVE")
+    con_sqlite.execute("PRAGMA temp_store=MEMORY")
     
     con_sqlite.execute("""
         CREATE VIRTUAL TABLE search_fts USING fts5(
@@ -574,13 +585,16 @@ def create_fts_sqlite() -> None:
         )
     """)
     
-    # Insérer par batches
+    # Insérer par batches avec transaction unique
+    con_sqlite.execute("BEGIN TRANSACTION")
     batch_size = 50000
     for i in range(0, len(df), batch_size):
         batch = df.iloc[i:i+batch_size]
         batch.to_sql('search_fts', con_sqlite, if_exists='append', index=False)
         if i % 500000 == 0 and i > 0:
             log(f"    {i:,} / {len(df):,} insérés")
+    
+    con_sqlite.commit()
     
     # Optimiser
     con_sqlite.execute("INSERT INTO search_fts(search_fts) VALUES('optimize')")
