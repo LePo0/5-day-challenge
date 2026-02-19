@@ -30,8 +30,18 @@ dist-ssr
 # data locales
 data_raw/
 data_parquet/
-venv/
+duckdb/
+duckdb/*.db
+catalog.db
+
+# Tempory python files
 __pycache__/
 *.pyc
+.venv/
+venv/
 .env
+
+# Test outputs
+tests/test_output/
+tests/__pycache__/
 duckdb/*.db
