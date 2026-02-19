@@ -22,7 +22,7 @@ views:
 
 # Lancement du serveur FastAPI
 api:
-	uvicorn api.main:app --reload
+	uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Tests d'intégrité JSON
 eval:
