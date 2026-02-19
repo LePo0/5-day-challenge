@@ -693,44 +693,44 @@ def create_fts_sqlite() -> None:
 #     size_mb = os.path.getsize(SQLITE_FTS) / 1024 / 1024
 #     log(f"   Index FTS5 créé : {size_mb:.1f} MB")
 
-# def verify_views(con: duckdb.DuckDBPyConnection) -> None:
-#     """Vérifications de cohérence"""
-#     log("VÉRIFICATIONS...")
+def verify_views(con: duckdb.DuckDBPyConnection) -> None:
+     """Vérifications de cohérence"""
+     log("VÉRIFICATIONS...")
     
-#     # Golden Record : test échantillon
-#     sample = con.execute(f"""
-#         SELECT siret, nom, id_rna, is_ban_validated, nature
-#         FROM '{GOLDEN_RECORD}'
-#         LIMIT 3
-#     """).fetchall()
+     # Golden Record : test échantillon
+     sample = con.execute(f"""
+         SELECT siret, nom, id_rna, is_ban_validated, nature
+         FROM '{GOLDEN_RECORD}'
+         LIMIT 3
+     """).fetchall()
     
-#     log("  Échantillon Golden Record :")
-#     for row in sample:
-#         siret, nom, rna, geo, nature = row
-#         log(f"    {siret} | {nom[:40] if nom else '[VIDE]'} | RNA={rna} | GEO={geo} | {nature}")
+     log("  Échantillon Golden Record :")
+     for row in sample:
+         siret, nom, rna, geo, nature = row
+         log(f"    {siret} | {nom[:40] if nom else '[VIDE]'} | RNA={rna} | GEO={geo} | {nature}")
     
-#     # Search View : comptages
-#     search_stats = con.execute(f"""
-#         SELECT 
-#             COUNT(*) as total,
-#             SUM(CASE WHEN is_association THEN 1 ELSE 0 END) as nb_asso,
-#             AVG(LENGTH(search_text)) as avg_text_len
-#         FROM '{SEARCH_VIEW}'
-#     """).fetchone()
+     # Search View : comptages
+     search_stats = con.execute(f"""
+         SELECT 
+             COUNT(*) as total,
+             SUM(CASE WHEN is_association THEN 1 ELSE 0 END) as nb_asso,
+             AVG(LENGTH(search_text)) as avg_text_len
+         FROM '{SEARCH_VIEW}'
+     """).fetchone()
     
-#     log(f"  Search View : {search_stats[0]:,} entrées | {search_stats[1]:,} associations | texte moyen {search_stats[2]:.0f} car.")
+     log(f"  Search View : {search_stats[0]:,} entrées | {search_stats[1]:,} associations | texte moyen {search_stats[2]:.0f} car.")
     
-#     # Stats View : exemple
-#     stats_sample = con.execute(f"""
-#         SELECT code_postal, total_active, total_associations, top_naf_code
-#         FROM '{STATS_VIEW}'
-#         ORDER BY total_active DESC
-#         LIMIT 3
-#     """).fetchall()
+     # Stats View : exemple
+     stats_sample = con.execute(f"""
+         SELECT code_postal, total_active, total_associations, top_naf_code
+         FROM '{STATS_VIEW}'
+         ORDER BY total_active DESC
+         LIMIT 3
+     """).fetchall()
     
-#     log("  Top 3 codes postaux (par activité) :")
-#     for cp, actifs, assos, naf in stats_sample:
-#         log(f"    {cp} : {actifs:,} actifs | {assos:,} associations | NAF dominant = {naf}")
+     log("  Top 3 codes postaux (par activité) :")
+     for cp, actifs, assos, naf in stats_sample:
+        log(f"    {cp} : {actifs:,} actifs | {assos:,} associations | NAF dominant = {naf}")
 
 def benchmark_performance(con: duckdb.DuckDBPyConnection) -> None:
     """Test de performance des requêtes"""
