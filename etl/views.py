@@ -528,47 +528,25 @@ def create_indexes(con: duckdb.DuckDBPyConnection) -> None:
 def create_fts_sqlite() -> None:
     """
     Crée une base SQLite FTS5 pour la recherche textuelle ultra-rapide
+    Version STREAMING: pas de pandas .df() => pas d'OOM.
     """
     import sqlite3
-    
-    log("CRÉATION INDEX FULL-TEXT SEARCH (SQLite FTS5)...")
-    
+
+    log("CRÉATION INDEX FULL-TEXT SEARCH (SQLite FTS5) [streaming]...")
+
     SQLITE_FTS = os.path.join(DUCKDB_DIR, "fts_search.db")
-    
-    # Supprimer l'ancienne base si elle existe
     if os.path.exists(SQLITE_FTS):
         os.remove(SQLITE_FTS)
-    
-    # Charger les données depuis Parquet
+
     con_duck = duckdb.connect()
-    df = con_duck.execute(f"""
-        SELECT 
-            siret,
-            search_text,
-            search_text_norm,
-            code_postal,
-            ville,
-            display_name,
-            enseigne,
-            nature,
-            is_association,
-            id_rna
-        FROM '{SEARCH_VIEW}'
-        WHERE search_text IS NOT NULL AND search_text != ''
-    """).df()
-    
-    log(f"  {len(df):,} lignes à indexer")
-    
-    # Créer la base SQLite avec FTS5 + optimisations PRAGMA
     con_sqlite = sqlite3.connect(SQLITE_FTS)
-    
-    # Optimisations SQLite : mode rapide sans garanties ACID (fichier temporaire)
-    con_sqlite.execute("PRAGMA journal_mode=OFF")
-    con_sqlite.execute("PRAGMA synchronous=OFF")
-    con_sqlite.execute("PRAGMA cache_size=1000000")  # 1M pages = ~4GB cache
-    con_sqlite.execute("PRAGMA locking_mode=EXCLUSIVE")
-    con_sqlite.execute("PRAGMA temp_store=MEMORY")
-    
+
+    # PRAGMA rapides (base rebuildable)
+    con_sqlite.execute("PRAGMA journal_mode=WAL;")
+    con_sqlite.execute("PRAGMA synchronous=NORMAL;")
+    con_sqlite.execute("PRAGMA temp_store=MEMORY;")
+    con_sqlite.execute("PRAGMA cache_size=-200000;")  # ~200MB (évite les 4GB…)
+
     con_sqlite.execute("""
         CREATE VIRTUAL TABLE search_fts USING fts5(
             siret UNINDEXED,
@@ -584,64 +562,174 @@ def create_fts_sqlite() -> None:
             tokenize='porter unicode61 remove_diacritics 1'
         )
     """)
-    
-    # Insérer par batches avec transaction unique
-    con_sqlite.execute("BEGIN TRANSACTION")
+
+    query = f"""
+        SELECT 
+            siret,
+            search_text,
+            search_text_norm,
+            code_postal,
+            ville,
+            display_name,
+            enseigne,
+            nature,
+            is_association,
+            id_rna
+        FROM '{SEARCH_VIEW}'
+        WHERE search_text IS NOT NULL AND search_text != ''
+    """
+    cur = con_duck.execute(query)
+
+    insert_sql = """
+        INSERT INTO search_fts(
+            siret, search_text, search_text_norm, code_postal, ville,
+            display_name, enseigne, nature, is_association, id_rna
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    total = 0
     batch_size = 50000
-    for i in range(0, len(df), batch_size):
-        batch = df.iloc[i:i+batch_size]
-        batch.to_sql('search_fts', con_sqlite, if_exists='append', index=False)
-        if i % 500000 == 0 and i > 0:
-            log(f"    {i:,} / {len(df):,} insérés")
-    
+
+    con_sqlite.execute("BEGIN")
+    while True:
+        rows = cur.fetchmany(batch_size)
+        if not rows:
+            break
+        con_sqlite.executemany(insert_sql, rows)
+        total += len(rows)
+        if total % 500000 == 0:
+            log(f"    {total:,} lignes indexées...")
+            con_sqlite.commit()
+            con_sqlite.execute("BEGIN")
+
     con_sqlite.commit()
-    
-    # Optimiser
+
     con_sqlite.execute("INSERT INTO search_fts(search_fts) VALUES('optimize')")
     con_sqlite.commit()
+
     con_sqlite.close()
     con_duck.close()
-    
+
     size_mb = os.path.getsize(SQLITE_FTS) / 1024 / 1024
-    log(f"   Index FTS5 créé : {size_mb:.1f} MB")
+    log(f"  ✅ Index FTS5 créé : {total:,} lignes | {size_mb:.1f} MB")
+
+# def create_fts_sqlite() -> None:
+#     """
+#     Crée une base SQLite FTS5 pour la recherche textuelle ultra-rapide
+#     """
+#     import sqlite3
+    
+#     log("CRÉATION INDEX FULL-TEXT SEARCH (SQLite FTS5)...")
+    
+#     SQLITE_FTS = os.path.join(DUCKDB_DIR, "fts_search.db")
+    
+#     # Supprimer l'ancienne base si elle existe
+#     if os.path.exists(SQLITE_FTS):
+#         os.remove(SQLITE_FTS)
+    
+#     # Charger les données depuis Parquet
+#     con_duck = duckdb.connect()
+#     df = con_duck.execute(f"""
+#         SELECT 
+#             siret,
+#             search_text,
+#             search_text_norm,
+#             code_postal,
+#             ville,
+#             display_name,
+#             enseigne,
+#             nature,
+#             is_association,
+#             id_rna
+#         FROM '{SEARCH_VIEW}'
+#         WHERE search_text IS NOT NULL AND search_text != ''
+#     """).df()
+    
+#     log(f"  {len(df):,} lignes à indexer")
+    
+#     # Créer la base SQLite avec FTS5 + optimisations PRAGMA
+#     con_sqlite = sqlite3.connect(SQLITE_FTS)
+    
+#     # Optimisations SQLite : mode rapide sans garanties ACID (fichier temporaire)
+#     con_sqlite.execute("PRAGMA journal_mode=OFF")
+#     con_sqlite.execute("PRAGMA synchronous=OFF")
+#     con_sqlite.execute("PRAGMA cache_size=1000000")  # 1M pages = ~4GB cache
+#     con_sqlite.execute("PRAGMA locking_mode=EXCLUSIVE")
+#     con_sqlite.execute("PRAGMA temp_store=MEMORY")
+    
+#     con_sqlite.execute("""
+#         CREATE VIRTUAL TABLE search_fts USING fts5(
+#             siret UNINDEXED,
+#             search_text,
+#             search_text_norm,
+#             code_postal UNINDEXED,
+#             ville UNINDEXED,
+#             display_name UNINDEXED,
+#             enseigne UNINDEXED,
+#             nature UNINDEXED,
+#             is_association UNINDEXED,
+#             id_rna UNINDEXED,
+#             tokenize='porter unicode61 remove_diacritics 1'
+#         )
+#     """)
+    
+#     # Insérer par batches avec transaction unique
+#     con_sqlite.execute("BEGIN TRANSACTION")
+#     batch_size = 50000
+#     for i in range(0, len(df), batch_size):
+#         batch = df.iloc[i:i+batch_size]
+#         batch.to_sql('search_fts', con_sqlite, if_exists='append', index=False)
+#         if i % 500000 == 0 and i > 0:
+#             log(f"    {i:,} / {len(df):,} insérés")
+    
+#     con_sqlite.commit()
+    
+#     # Optimiser
+#     con_sqlite.execute("INSERT INTO search_fts(search_fts) VALUES('optimize')")
+#     con_sqlite.commit()
+#     con_sqlite.close()
+#     con_duck.close()
+    
+#     size_mb = os.path.getsize(SQLITE_FTS) / 1024 / 1024
+#     log(f"   Index FTS5 créé : {size_mb:.1f} MB")
 
 def verify_views(con: duckdb.DuckDBPyConnection) -> None:
-    """Vérifications de cohérence"""
-    log("VÉRIFICATIONS...")
+     """Vérifications de cohérence"""
+     log("VÉRIFICATIONS...")
     
-    # Golden Record : test échantillon
-    sample = con.execute(f"""
-        SELECT siret, nom, id_rna, is_ban_validated, nature
-        FROM '{GOLDEN_RECORD}'
-        LIMIT 3
-    """).fetchall()
+     # Golden Record : test échantillon
+     sample = con.execute(f"""
+         SELECT siret, nom, id_rna, is_ban_validated, nature
+         FROM '{GOLDEN_RECORD}'
+         LIMIT 3
+     """).fetchall()
     
-    log("  Échantillon Golden Record :")
-    for row in sample:
-        siret, nom, rna, geo, nature = row
-        log(f"    {siret} | {nom[:40] if nom else '[VIDE]'} | RNA={rna} | GEO={geo} | {nature}")
+     log("  Échantillon Golden Record :")
+     for row in sample:
+         siret, nom, rna, geo, nature = row
+         log(f"    {siret} | {nom[:40] if nom else '[VIDE]'} | RNA={rna} | GEO={geo} | {nature}")
     
-    # Search View : comptages
-    search_stats = con.execute(f"""
-        SELECT 
-            COUNT(*) as total,
-            SUM(CASE WHEN is_association THEN 1 ELSE 0 END) as nb_asso,
-            AVG(LENGTH(search_text)) as avg_text_len
-        FROM '{SEARCH_VIEW}'
-    """).fetchone()
+     # Search View : comptages
+     search_stats = con.execute(f"""
+         SELECT 
+             COUNT(*) as total,
+             SUM(CASE WHEN is_association THEN 1 ELSE 0 END) as nb_asso,
+             AVG(LENGTH(search_text)) as avg_text_len
+         FROM '{SEARCH_VIEW}'
+     """).fetchone()
     
-    log(f"  Search View : {search_stats[0]:,} entrées | {search_stats[1]:,} associations | texte moyen {search_stats[2]:.0f} car.")
+     log(f"  Search View : {search_stats[0]:,} entrées | {search_stats[1]:,} associations | texte moyen {search_stats[2]:.0f} car.")
     
-    # Stats View : exemple
-    stats_sample = con.execute(f"""
-        SELECT code_postal, total_active, total_associations, top_naf_code
-        FROM '{STATS_VIEW}'
-        ORDER BY total_active DESC
-        LIMIT 3
-    """).fetchall()
+     # Stats View : exemple
+     stats_sample = con.execute(f"""
+         SELECT code_postal, total_active, total_associations, top_naf_code
+         FROM '{STATS_VIEW}'
+         ORDER BY total_active DESC
+         LIMIT 3
+     """).fetchall()
     
-    log("  Top 3 codes postaux (par activité) :")
-    for cp, actifs, assos, naf in stats_sample:
+     log("  Top 3 codes postaux (par activité) :")
+     for cp, actifs, assos, naf in stats_sample:
         log(f"    {cp} : {actifs:,} actifs | {assos:,} associations | NAF dominant = {naf}")
 
 def benchmark_performance(con: duckdb.DuckDBPyConnection) -> None:
