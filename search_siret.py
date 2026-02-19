@@ -1,174 +1,175 @@
 """
-Script de recherche par SIRET dans la base SIRENE
+Script de recherche rapide par SIRET
 Usage: python search_siret.py [SIRET]
 """
 import sys
 import duckdb
-import os
 
-DUCKDB_PATH = "duckdb/catalog.db"
-GOLDEN_RECORD = "data_parquet/golden_record.parquet"
+SIRET = sys.argv[1] if len(sys.argv) > 1 else "77567227221138"
 
-def search_siret(siret: str) -> None:
-    """Recherche un SIRET dans golden_record"""
+print(f"\n{'='*80}")
+print(f"🔍 RECHERCHE SIRET: {SIRET}")
+print(f"{'='*80}\n")
+
+con = duckdb.connect("duckdb/catalog.db", read_only=True)
+
+# 1. Recherche dans golden_record
+print("📊 GOLDEN RECORD")
+print("-" * 80)
+
+result = con.execute(f"""
+    SELECT *
+    FROM golden_record
+    WHERE siret = '{SIRET}'
+""").fetchone()
+
+if result:
+    cols = [desc[0] for desc in con.description]
+    print(f"✅ TROUVÉ\n")
+    for col, val in zip(cols, result):
+        print(f"  {col:25} : {val}")
+else:
+    print(f"❌ PAS TROUVÉ dans golden_record\n")
+
+# 2. Recherche dans SIRENE Silver
+print(f"\n{'='*80}")
+print("📄 SIRENE SILVER (données brutes)")
+print("-" * 80)
+
+result_sirene = con.execute(f"""
+    SELECT *
+    FROM 'data_parquet/sirene_silver.parquet'
+    WHERE siret = '{SIRET}'
+""").fetchone()
+
+if result_sirene:
+    cols = [desc[0] for desc in con.description]
+    print(f"✅ TROUVÉ\n")
+    for col, val in zip(cols, result_sirene):
+        print(f"  {col:25} : {val}")
+else:
+    print(f"❌ PAS TROUVÉ dans sirene_silver\n")
+
+# 3. Diagnostic BAN matching
+if result:
+    print(f"\n{'='*80}")
+    print("🗺️  DIAGNOSTIC MATCHING BAN (avec city_norm)")
+    print("-" * 80)
     
-    # Vérifier que le SIRET est valide (14 chiffres)
-    if not siret.isdigit() or len(siret) != 14:
-        print(f"❌ SIRET invalide : '{siret}' (doit contenir 14 chiffres)")
-        return
+    ban_check = con.execute(f"""
+        SELECT 
+            s.siret,
+            s.code_postal,
+            s.city_norm AS sirene_city,
+            s.numero_norm,
+            s.type_voie_norm,
+            s.libelle_voie_norm,
+            b.city_norm AS ban_city,
+            b.latitude,
+            b.longitude,
+            b.geo_quality
+        FROM 'data_parquet/sirene_silver.parquet' s
+        LEFT JOIN (
+            SELECT 
+                code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm,
+                ANY_VALUE(latitude) AS latitude,
+                ANY_VALUE(longitude) AS longitude,
+                MAX(geo_quality) AS geo_quality
+            FROM 'data_parquet/ban_silver.parquet'
+            GROUP BY code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm
+        ) b 
+            ON s.code_postal = b.code_postal 
+            AND s.city_norm = b.city_norm
+            AND s.numero_norm = b.numero_norm
+            AND COALESCE(s.type_voie_norm, '') = COALESCE(b.type_voie_norm, '')
+            AND COALESCE(s.libelle_voie_norm, '') = COALESCE(b.libelle_voie_norm, '')
+        WHERE s.siret = '{SIRET}'
+    """).fetchone()
     
-    # Connexion à DuckDB
-    if os.path.exists(DUCKDB_PATH):
-        con = duckdb.connect(DUCKDB_PATH, read_only=True)
-        print(f"📂 Connexion à {DUCKDB_PATH}")
-    else:
-        con = duckdb.connect(':memory:')
-        print(f"📂 Lecture directe de {GOLDEN_RECORD}")
-    
-    # Recherche dans golden_record
-    query = f"""
-    SELECT 
-        siret,
-        siren,
-        nom,
-        enseigne,
-        naf,
-        status,
-        nature,
-        code_postal,
-        ville,
-        num_voie,
-        type_voie,
-        libelle_voie,
-        id_rna,
-        rna_titre,
-        latitude,
-        longitude,
-        is_ban_validated,
-        geo_quality,
-        match_score,
-        match_methode
-    FROM '{GOLDEN_RECORD}' 
-    WHERE siret = '{siret}'
-    """
-    
-    try:
-        result = con.execute(query).fetchone()
+    if ban_check:
+        cols = [desc[0] for desc in con.description]
+        has_geo = ban_check[7] is not None
         
-        if result is None:
-            print(f"\n❌ Aucun résultat trouvé pour SIRET: {siret}")
-        else:
-            print(f"\n✅ Établissement trouvé :")
-            print("=" * 80)
-            print(f"{'SIRET':<25} : {result[0]}")
-            print(f"{'SIREN':<25} : {result[1]}")
-            print(f"{'Nom':<25} : {result[2]}")
-            print(f"{'Enseigne':<25} : {result[3] or '(aucune)'}")
-            print(f"{'Code NAF':<25} : {result[4]}")
-            print(f"{'Statut':<25} : {result[5]}")
-            print(f"{'Nature':<25} : {result[6]}")
-            print()
-            print(f"{'Adresse':<25} :")
-            print(f"  {result[9] or ''} {result[10] or ''} {result[11] or ''}")
-            print(f"  {result[7]} {result[8]}")
-            print()
-            
-            if result[12]:  # id_rna
-                print(f"{'Association RNA':<25} :")
-                print(f"  {'ID RNA':<23} : {result[12]}")
-                print(f"  {'Titre':<23} : {result[13]}")
-                print(f"  {'Score matching':<23} : {result[18]:.3f}" if result[18] else "")
-                print(f"  {'Méthode':<23} : {result[19]}" if result[19] else "")
-                print()
-            
-            if result[14] and result[15]:  # lat, lon
-                print(f"{'Géolocalisation BAN':<25} :")
-                print(f"  {'Latitude':<23} : {result[14]:.6f}")
-                print(f"  {'Longitude':<23} : {result[15]:.6f}")
-                print(f"  {'Validé BAN':<23} : {'✓' if result[16] else '✗'}")
-                print(f"  {'Qualité géo':<23} : {result[17]:.2f}" if result[17] else "")
-            else:
-                print(f"{'Géolocalisation':<25} : ❌ Non géocodée")
-            
-            print("=" * 80)
-            
-    except Exception as e:
-        print(f"\n❌ Erreur lors de la recherche : {e}")
-    finally:
-        con.close()
-
-
-def search_in_sirene_bronze(siret: str) -> None:
-    """Recherche dans sirene.parquet (données brutes)"""
-    
-    if not os.path.exists("data_parquet/sirene.parquet"):
-        print("❌ Fichier sirene.parquet introuvable")
-        return
-    
-    con = duckdb.connect(':memory:')
-    
-    query = f"""
-    SELECT 
-        siret,
-        siren,
-        nom,
-        enseigne,
-        naf,
-        etat,
-        code_postal,
-        ville,
-        num_voie,
-        repetition,
-        type_voie,
-        libelle_voie,
-        complement_adresse
-    FROM 'data_parquet/sirene.parquet'
-    WHERE siret = '{siret}'
-    """
-    
-    try:
-        result = con.execute(query).fetchone()
+        print(f"{'Statut géolocalisation':<30} : {'✅ GÉOLOCALISÉ' if has_geo else '❌ NON GÉOLOCALISÉ'}\n")
         
-        if result is None:
-            print(f"\n❌ Aucun résultat dans SIRENE brut pour: {siret}")
-        else:
-            print(f"\n✅ Données SIRENE brutes :")
-            print("=" * 80)
-            print(f"{'SIRET':<25} : {result[0]}")
-            print(f"{'SIREN':<25} : {result[1]}")
-            print(f"{'Nom':<25} : {result[2]}")
-            print(f"{'Enseigne':<25} : {result[3] or '(aucune)'}")
-            print(f"{'NAF':<25} : {result[4]}")
-            print(f"{'État':<25} : {result[5]}")
-            print()
-            print(f"{'Adresse brute':<25} :")
-            print(f"  {'Numéro':<23} : {result[8] or '(vide)'}")
-            print(f"  {'Répétition':<23} : {result[9] or '(aucune)'}")
-            print(f"  {'Type voie':<23} : {result[10] or '(vide)'}")
-            print(f"  {'Libellé voie':<23} : {result[11] or '(vide)'}")
-            print(f"  {'Complément':<23} : {result[12] or '(aucun)'}")
-            print(f"  {'Code postal':<23} : {result[6]}")
-            print(f"  {'Ville':<23} : {result[7]}")
-            print("=" * 80)
+        for col, val in zip(cols, ban_check):
+            marker = "✅" if val else "❌"
+            if col in ['latitude', 'longitude', 'geo_quality']:
+                marker = "✅" if val else "⚠️ "
+            print(f"  {marker} {col:<25} : {val}")
+        
+        # Diagnostic détaillé
+        if not has_geo:
+            print(f"\n⚠️  DIAGNOSTIC:")
+            print(f"  SIRENE city_norm : '{ban_check[2]}'")
+            print(f"  BAN city_norm    : {ban_check[6]}")
             
-    except Exception as e:
-        print(f"\n❌ Erreur lors de la recherche : {e}")
-    finally:
-        con.close()
-
-
-if __name__ == "__main__":
-    print("🔍 Recherche d'établissement par SIRET\n")
+            if ban_check[2] != ban_check[6]:
+                print(f"\n❌ PROBLÈME IDENTIFIÉ : city_norm incompatible !")
+                print(f"   → '{ban_check[2]}' ≠ NULL ou BAN différent")
+                print(f"\n💡 SOLUTION : Retirer city_norm du JOIN BAN")
+                print(f"   Le code postal ({ban_check[1]}) suffit pour identifier la commune")
     
-    # Récupérer le SIRET depuis les arguments ou demander à l'utilisateur
-    if len(sys.argv) > 1:
-        siret = sys.argv[1]
+    # Test SANS city_norm
+    print(f"\n{'='*80}")
+    print("🗺️  TEST MATCHING BAN (SANS city_norm)")
+    print("-" * 80)
+    
+    ban_test = con.execute(f"""
+        SELECT 
+            s.code_postal,
+            b.city_norm AS ban_city,
+            b.latitude,
+            b.longitude,
+            b.geo_quality
+        FROM 'data_parquet/sirene_silver.parquet' s
+        LEFT JOIN (
+            SELECT 
+                code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm,
+                ANY_VALUE(latitude) AS latitude,
+                ANY_VALUE(longitude) AS longitude,
+                MAX(geo_quality) AS geo_quality
+            FROM 'data_parquet/ban_silver.parquet'
+            GROUP BY code_postal, city_norm, numero_norm, type_voie_norm, libelle_voie_norm
+        ) b 
+            ON s.code_postal = b.code_postal 
+            AND s.numero_norm = b.numero_norm
+            AND COALESCE(s.type_voie_norm, '') = COALESCE(b.type_voie_norm, '')
+            AND COALESCE(s.libelle_voie_norm, '') = COALESCE(b.libelle_voie_norm, '')
+        WHERE s.siret = '{SIRET}'
+    """).fetchone()
+    
+    if ban_test and ban_test[2]:
+        print(f"✅ SUCCÈS : Géolocalisation trouvée SANS city_norm !\n")
+        print(f"  Code postal   : {ban_test[0]}")
+        print(f"  Ville BAN     : {ban_test[1]}")
+        print(f"  Latitude      : {ban_test[2]:.6f}")
+        print(f"  Longitude     : {ban_test[3]:.6f}")
+        print(f"  Geo quality   : {ban_test[4]}")
+        print(f"\n💡 Retirer city_norm du JOIN améliorerait cette géolocalisation")
     else:
-        siret = input("Entrez le SIRET (14 chiffres) : ").strip()
-    
-    # Recherche dans golden_record
-    search_siret(siret)
-    
-    # Option : voir aussi les données brutes
-    if input("\n📋 Voir aussi les données SIRENE brutes ? (o/N) : ").lower() == 'o':
-        search_in_sirene_bronze(siret)
+        print(f"❌ Aucune géolocalisation même sans city_norm")
+        print(f"   (l'adresse n'existe peut-être pas dans BAN)")
+
+# 4. Statistiques globales
+print(f"\n{'='*80}")
+print("📊 STATISTIQUES GLOBALES")
+print("-" * 80)
+
+stats = con.execute("""
+    SELECT 
+        COUNT(*) as total,
+        COUNT(latitude) as with_geo,
+        COUNT(*) - COUNT(latitude) as without_geo,
+        ROUND(COUNT(latitude) * 100.0 / COUNT(*), 2) as pct_geo
+    FROM golden_record
+""").fetchone()
+
+print(f"""
+  Total établissements     : {stats[0]:,}
+  Avec géolocalisation     : {stats[1]:,} ({stats[3]}%)
+  Sans géolocalisation     : {stats[2]:,}
+""")
+
+con.close()
+print(f"{'='*80}\n")
