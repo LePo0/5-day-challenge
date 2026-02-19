@@ -6,7 +6,7 @@ import apiClient from '../api/apiClient';
 
 function FuzzySearch() {
     const [query, setQuery] = useState('');
-    const [postalCode, setPostalCode] = useState('');
+    const [department, setDepartment] = useState('');
     const setResults = useStore((state) => state.setResults);
     const setLoading = useStore((state) => state.setLoading);
     const setSearchType = useStore((state) => state.setSearchType);
@@ -14,9 +14,9 @@ function FuzzySearch() {
     const showToast = useStore((state) => state.showToast);
     const loading = useStore((state) => state.loading);
 
-    const handlePostalCodeChange = (e) => {
-        const value = e.target.value.replace(/\D/g, '').slice(0, 5);
-        setPostalCode(value);
+    const handleDepartmentChange = (e) => {
+        const value = e.target.value.replace(/\D/g, '').slice(0, 2);
+        setDepartment(value);
     };
 
     const handleSearch = async () => {
@@ -25,9 +25,7 @@ function FuzzySearch() {
         setError(null);
 
         try {
-            // Extract department code (first 2 digits) from postal code
-            const dept = postalCode.length >= 2 ? postalCode.substring(0, 2) : '';
-            const data = await apiClient.search(query, dept);
+            const data = await apiClient.search(query, department);
             setResults(data);
             showToast('success', `${data.count || 0} résultat(s) trouvé(s)`);
         } catch (error) {
@@ -38,7 +36,7 @@ function FuzzySearch() {
         }
     };
 
-    const isValid = query.trim() !== '' || postalCode !== '';
+    const isValid = query.trim() !== '' || department !== '';
 
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -65,11 +63,11 @@ function FuzzySearch() {
 
             <TextField
                 fullWidth
-                label="Code Postal"
-                value={postalCode}
-                onChange={handlePostalCodeChange}
-                placeholder="75015"
-                helperText={postalCode ? `${postalCode.length}/5 chiffres` : 'Optionnel'}
+                label="Département"
+                value={department}
+                onChange={handleDepartmentChange}
+                placeholder="75"
+                helperText={department ? `${department.length}/2 chiffres` : 'Optionnel - Code département (ex: 75 pour Paris)'}
             />
 
             <Button

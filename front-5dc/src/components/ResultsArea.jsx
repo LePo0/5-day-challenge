@@ -17,82 +17,152 @@ function ResultsArea() {
         if (!results) return null;
 
         const { identity, asso_id, location } = results;
+        const isAssociation = asso_id?.id_rna != null;
 
         return (
-            <Card variant="outlined" sx={{ mt: 2 }}>
-                <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
-                        <Typography variant="h5" fontWeight="bold">
-                            {identity?.nom_raison_sociale || 'N/A'}
-                        </Typography>
-                        <Chip
-                            label={location?.code_postal || 'N/A'}
-                            color="primary"
-                            size="small"
-                        />
-                    </Box>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+                {/* Carte principale - Identité */}
+                <Card variant="outlined">
+                    <CardContent>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
+                            <Box>
+                                <Typography variant="h5" fontWeight="bold" gutterBottom>
+                                    {identity?.nom_raison_sociale || '[SANS NOM]'}
+                                </Typography>
+                                {identity?.enseigne && (
+                                    <Typography variant="subtitle1" color="text.secondary">
+                                        Enseigne: {identity.enseigne}
+                                    </Typography>
+                                )}
+                            </Box>
+                            <Chip
+                                label={isAssociation ? "Association" : "Entreprise"}
+                                color={isAssociation ? "success" : "primary"}
+                                icon={isAssociation ? <Group /> : <Business />}
+                            />
+                        </Box>
 
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
-                        SIRET: {identity?.siret || 'N/A'}
-                    </Typography>
+                        <Divider sx={{ my: 2 }} />
 
-                    {identity?.enseigne && (
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                            Enseigne: {identity.enseigne}
-                        </Typography>
-                    )}
+                        <Grid container spacing={2}>
+                            <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" display="block">
+                                    SIRET
+                                </Typography>
+                                <Typography variant="body1" fontWeight="medium">
+                                    {identity?.siret || 'N/A'}
+                                </Typography>
+                            </Grid>
 
-                    {asso_id?.id_rna && (
-                        <Chip
-                            label={`Association RNA: ${asso_id.id_rna}`}
-                            color="success"
-                            size="small"
-                            sx={{ mt: 1, mb: 2 }}
-                        />
-                    )}
+                            {identity?.categorie_entreprise && (
+                                <Grid item xs={12} sm={6}>
+                                    <Typography variant="caption" color="text.secondary" display="block">
+                                        Catégorie
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="medium">
+                                        {identity.categorie_entreprise}
+                                    </Typography>
+                                </Grid>
+                            )}
+                        </Grid>
+                    </CardContent>
+                </Card>
 
-                    <Divider sx={{ my: 2 }} />
+                {/* Carte Association (si applicable) */}
+                {isAssociation && (
+                    <Card variant="outlined" sx={{ borderColor: 'success.main', borderWidth: 2 }}>
+                        <CardContent>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                                <Group color="success" />
+                                <Typography variant="h6" color="success.main">
+                                    Information Association
+                                </Typography>
+                            </Box>
 
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                        {location && (
-                            <Box sx={{ display: 'flex', alignItems: 'start', gap: 1 }}>
-                                <LocationOn fontSize="small" color="primary" />
-                                <Typography variant="body2">
+                            <Divider sx={{ my: 2 }} />
+
+                            <Grid container spacing={2}>
+                                <Grid item xs={12} sm={6}>
+                                    <Typography variant="caption" color="text.secondary" display="block">
+                                        Numéro RNA
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="medium">
+                                        {asso_id.id_rna}
+                                    </Typography>
+                                </Grid>
+
+                                {asso_id?.date_publication_jo && (
+                                    <Grid item xs={12} sm={6}>
+                                        <Typography variant="caption" color="text.secondary" display="block">
+                                            Date publication JO
+                                        </Typography>
+                                        <Typography variant="body1" fontWeight="medium">
+                                            {asso_id.date_publication_jo}
+                                        </Typography>
+                                    </Grid>
+                                )}
+                            </Grid>
+                        </CardContent>
+                    </Card>
+                )}
+
+                {/* Carte Localisation */}
+                {location && (
+                    <Card variant="outlined">
+                        <CardContent>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                                <LocationOn color="primary" />
+                                <Typography variant="h6">
+                                    Localisation
+                                </Typography>
+                            </Box>
+
+                            <Divider sx={{ my: 2 }} />
+
+                            <Box sx={{ mb: 3 }}>
+                                <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                                    Adresse
+                                </Typography>
+                                <Typography variant="body1" fontWeight="medium">
                                     {location.numero_voie} {location.type_voie} {location.libelle_voie}
-                                    {location.code_postal && location.commune &&
-                                        `, ${location.code_postal} ${location.commune}`
-                                    }
+                                </Typography>
+                                <Typography variant="body1" fontWeight="medium">
+                                    {location.code_postal} {location.commune}
                                 </Typography>
                             </Box>
-                        )}
 
-                        {location?.latitude && location?.longitude && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <LocationOn fontSize="small" color="secondary" />
-                                <Typography variant="body2">
-                                    Coordonnées GPS: {location.latitude}, {location.longitude}
-                                    {location.geo_score && ` (score: ${location.geo_score})`}
-                                </Typography>
-                            </Box>
-                        )}
-
-                        {identity?.categorie_entreprise && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Business fontSize="small" color="primary" />
-                                <Typography variant="body2">
-                                    Catégorie: {identity.categorie_entreprise}
-                                </Typography>
-                            </Box>
-                        )}
-
-                        {asso_id?.date_publication_jo && (
-                            <Typography variant="caption" color="text.secondary">
-                                Date publication JO: {asso_id.date_publication_jo}
-                            </Typography>
-                        )}
-                    </Box>
-                </CardContent>
-            </Card>
+                            {location?.latitude && location?.longitude && (
+                                <Grid container spacing={2}>
+                                    <Grid item xs={12} sm={4}>
+                                        <Typography variant="caption" color="text.secondary" display="block">
+                                            Latitude
+                                        </Typography>
+                                        <Typography variant="body2" fontWeight="medium">
+                                            {location.latitude.toFixed(4)}
+                                        </Typography>
+                                    </Grid>
+                                    <Grid item xs={12} sm={4}>
+                                        <Typography variant="caption" color="text.secondary" display="block">
+                                            Longitude
+                                        </Typography>
+                                        <Typography variant="body2" fontWeight="medium">
+                                            {location.longitude.toFixed(4)}
+                                        </Typography>
+                                    </Grid>
+                                    <Grid item xs={12} sm={4}>
+                                        <Typography variant="caption" color="text.secondary" display="block">
+                                            Score géolocalisation
+                                        </Typography>
+                                        <Typography variant="body2" fontWeight="medium">
+                                            {location.geo_score ? (location.geo_score * 100).toFixed(0) + '%' : 'N/A'}
+                                        </Typography>
+                                    </Grid>
+                                </Grid>
+                            )}
+                        </CardContent>
+                    </Card>
+                )}
+            </Box>
         );
     };
 

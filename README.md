@@ -2,7 +2,7 @@
 
 ## Vue d'ensemble
 
-Projet ETL de consolidation des données SIRENE (entreprises), RNA (associations) et BAN (adresses) permettant la recherche rapide et géolocalisée d'établissements français via une API REST et une interface web moderne.
+Projet ETL de consolidation des données SIREN (entreprises), RNA (associations) et BAN (adresses) permettant la recherche rapide et géolocalisée d'établissements français via une API REST et une interface web moderne.
 
 ## Architecture
 
@@ -26,15 +26,15 @@ Projet ETL de consolidation des données SIRENE (entreprises), RNA (associations
 
 ```
 Bronze Layer (data_raw/)
-  ├── StockEtablissement_utf8.csv (SIRENE)
+  ├── StockEtablissement_utf8.csv (SIREN)
   ├── rna_waldec_*.csv (RNA)
   └── adresses-*.csv (BAN)
 
 Silver Layer (data_parquet/)
-  ├── sirene_silver.parquet
+  ├── siren_silver.parquet
   ├── rna_silver.parquet
   ├── ban_silver.parquet
-  └── link_sirene_rna.parquet
+  └── link_siren_rna.parquet
 
 Gold Layer (duckdb/)
   ├── catalog.db (golden_record, search_view, stats_view)
@@ -43,23 +43,34 @@ Gold Layer (duckdb/)
 
 ## Pipeline ETL
 
-### Étape 1: Normalisation (etl/normalize.py)
+### Étape 1: Ingest (etl/download.py + etl/ingest.py)
 
-Normalisation des fichiers CSV sources:
+Téléchargement et conversion CSV vers Parquet:
 - SIRENE: 42M d'établissements
 - RNA: 1.5M d'associations
 - BAN: 26M d'adresses
 
 ```powershell
+python etl/download.py
+python etl/ingest.py
+```
+
+Ou avec le Makefile:
+```powershell
+.\make.ps1 ingest
+```
+
+### Étape 2: Normalisation (etl/normalize.py)
+
+Nettoyage des adresses et création des tables Silver:
+
+```powershell
 python etl/normalize.py
 ```
 
-### Étape 2: Conversion Parquet (etl/csv_to_parquet.py)
-
-Conversion des CSV normalisés en Parquet pour performances optimales:
-
+Ou:
 ```powershell
-python etl/csv_to_parquet.py
+.\make.ps1 normalize
 ```
 
 ### Étape 3: Matching SIRENE-RNA (etl/match.py)
@@ -70,12 +81,22 @@ Création de la table de liaison entre SIRENE et RNA basée sur le SIREN:
 python etl/match.py
 ```
 
+Ou:
+```powershell
+.\make.ps1 match
+```
+
 ### Étape 4: Génération des vues (etl/views.py)
 
-Création du golden_record et des vues optimisées:
+Création du golden_record et des vues finales (Golden, Search, Stats):
 
 ```powershell
 python etl/views.py
+```
+
+Ou:
+```powershell
+.\make.ps1 views
 ```
 
 **Optimisations appliquées**:
@@ -122,6 +143,11 @@ CREATE TABLE golden_record (
 
 ```powershell
 uvicorn api.main:app --reload
+```
+
+Ou:
+```powershell
+.\make.ps1 api
 ```
 
 Le serveur démarre sur `http://localhost:8000`
@@ -184,17 +210,17 @@ curl http://localhost:8000/siret/12345678901234
 #### 2. Recherche textuelle
 
 ```
-GET /search?query={text}&code_postal={cp}&limit={n}
+GET /search?query={text}&code_postal={dept}&limit={n}
 ```
 
 **Paramètres**:
 - `query` (obligatoire): Texte de recherche (nom, enseigne, activité)
-- `code_postal` (optionnel): Filtrage par code postal
+- `code_postal` (optionnel): Filtrage par département (2 chiffres, ex: 75)
 - `limit` (optionnel): Nombre de résultats (défaut: 20, max: 100)
 
 **Exemple**:
 ```bash
-curl "http://localhost:8000/search?query=boulangerie&code_postal=75001&limit=10"
+curl "http://localhost:8000/search?query=boulangerie&code_postal=75&limit=10"
 ```
 
 **Réponse**:
@@ -306,22 +332,31 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-3. Télécharger les données sources:
-- SIRENE: https://www.insee.fr/fr/statistiques/fichier/3591226/StockEtablissement_utf8.zip
-- RNA: https://www.data.gouv.fr/fr/datasets/repertoire-national-des-associations/
-- BAN: https://adresse.data.gouv.fr/data/ban/adresses/latest/csv/
-
-4. Placer les fichiers CSV dans `data_raw/`
-
-5. Exécuter le pipeline ETL complet:
+3. Exécuter le pipeline ETL complet:
 ```powershell
+# Téléchargement et conversion CSV -> Parquet
+python etl/download.py
+python etl/ingest.py
+
+# Nettoyage adresses -> Tables Silver
 python etl/normalize.py
-python etl/csv_to_parquet.py
+
+# Matching SIRENE/RNA
 python etl/match.py
+
+# Génération des vues finales
 python etl/views.py
 ```
 
-6. Lancer l'API:
+Ou utiliser le script make:
+```powershell
+.\make.ps1 ingest
+.\make.ps1 normalize
+.\make.ps1 match
+.\make.ps1 views
+```
+
+4. Lancer l'API:
 ```powershell
 uvicorn api.main:app --reload
 ```
@@ -403,11 +438,11 @@ duck_conn = duckdb.connect(DB_PATH, read_only=True, config={'access_mode': 'READ
 
 ### Métriques ETL
 
-- Lecture Parquet SIRENE (42M lignes): ~8s
+- Lecture Parquet SIREN (42M lignes): ~8s
 - Lecture Parquet RNA (1.5M lignes): ~1s
 - Lecture Parquet BAN (26M lignes): ~12s
 - CTE ban_best (géolocalisation): ~18s
-- Jointures SIRENE + RNA + BAN: ~15s
+- Jointures SIREN + RNA + BAN: ~15s
 - Écriture golden_record: ~10s
 - Indexation SQLite FTS5: ~25s
 - **Total**: 50-70s
@@ -437,6 +472,9 @@ duck_conn = duckdb.connect(DB_PATH, read_only=True, config={'access_mode': 'READ
 # Test intégrité des données
 python tests/test_json_integrity.py
 
+# Ou via make
+.\make.ps1 eval
+
 # Test API
 curl http://localhost:8000/ping
 curl http://localhost:8000/siret/12345678901234
@@ -450,11 +488,11 @@ curl http://localhost:8000/siret/12345678901234
 │   ├── __init__.py
 │   └── main.py                 # API FastAPI
 ├── etl/
-│   ├── normalize.py            # Normalisation CSV
-│   ├── csv_to_parquet.py       # Conversion Parquet
+│   ├── download.py             # Téléchargement données sources
+│   ├── ingest.py               # Conversion CSV -> Parquet
+│   ├── normalize.py            # Nettoyage adresses Silver
 │   ├── match.py                # Matching SIRENE-RNA
-│   ├── views.py                # Génération golden_record
-│   └── ingest.py               # Utilitaires
+│   └── views.py                # Génération golden_record
 ├── tests/
 │   └── test_json_integrity.py
 ├── data_raw/                   # CSV sources
@@ -475,4 +513,4 @@ curl http://localhost:8000/siret/12345678901234
 
 ## Auteur
 
-Projet développé dans le cadre du "5-day challenge" - Consolidation SIRENE + RNA + BAN
+Projet développé dans le cadre du "5-day challenge" - Consolidation SIREN + RNA + BAN
