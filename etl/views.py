@@ -435,10 +435,10 @@ def create_indexes(con: duckdb.DuckDBPyConnection) -> None:
     
     # Index pour agrégations stats (si stats_view absente ou calcul temps réel)
     try:
-        con.execute("CREATE INDEX IF NOT EXISTS idx_golden_cp_etat ON golden_record(code_postal, etat)")
-        log("     golden_record.(code_postal, etat) - Count fermés")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_golden_cp_status ON golden_record(code_postal, status)")
+        log("     golden_record.(code_postal, status) - Count fermés")
     except Exception as e:
-        log(f"      Erreur cp+etat : {e}")
+        log(f"      Erreur cp+status : {e}")
     
     try:
         con.execute("CREATE INDEX IF NOT EXISTS idx_golden_cp_naf ON golden_record(code_postal, naf)")
@@ -510,7 +510,7 @@ def create_indexes(con: duckdb.DuckDBPyConnection) -> None:
     log("  GOLDEN_RECORD (42M lignes) :")
     log("    • siret (UNIQUE)           → GET /siret/{siret} < 50ms")
     log("    • code_postal              → Filtre géographique")
-    log("    • (code_postal, etat)      → Count fermés pour /stats")
+    log("    • (code_postal, status)    → Count fermés pour /stats")
     log("    • (code_postal, naf)       → Top NAF pour /stats")
     log("")
     log("  SEARCH_VIEW (38M lignes actives) :")
