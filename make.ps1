@@ -19,23 +19,23 @@ function Start-Ingest {
 }
 
 function Start-Normalize { python etl/normalize.py }
-function Start-Match     { python etl/match.py }
-function Start-Views     { python etl/views.py }
+function Start-Match { python etl/match.py }
+function Start-Views { python etl/views.py }
 
 function Start-API {
-    uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 }
 
 function Start-Eval { python tests/test_json_integrity.py }
 
 switch ($Command.ToLower()) {
-    "help"      { Show-Help }
-    "ingest"    { Start-Ingest }
+    "help" { Show-Help }
+    "ingest" { Start-Ingest }
     "normalize" { Start-Normalize }
-    "match"     { Start-Match }
-    "views"     { Start-Views }
-    "api"       { Start-API }
-    "eval"      { Start-Eval }
+    "match" { Start-Match }
+    "views" { Start-Views }
+    "api" { Start-API }
+    "eval" { Start-Eval }
     default {
         Write-Host "Commande inconnue: $Command" -ForegroundColor Red
         Show-Help
