@@ -1,9 +1,42 @@
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from datetime import datetime
 import time
+import duckdb
+import os
+from pathlib import Path
+
+# ==================== Configuration ====================
+
+# Chemins vers les données
+DATA_DIR = Path(__file__).parent.parent / "data_parquet"
+DUCKDB_DIR = Path(__file__).parent.parent / "duckdb"
+CATALOG_DB = DUCKDB_DIR / "catalog.db"
+FTS_DB = DUCKDB_DIR / "fts_search.db"
+
+GOLDEN_RECORD = DATA_DIR / "golden_record.parquet"
+SEARCH_VIEW = DATA_DIR / "search_view.parquet"
+STATS_VIEW = DATA_DIR / "stats_view.parquet"
+
+# Connexions (partagées)
+con = None  # DuckDB
+fts_con = None  # SQLite FTS5
+stats_cache = {}  # Cache des stats en RAM
+
+# ---------------------------
+# MODE DEV / PROD
+# ---------------------------
+DEV = os.getenv("DEV", "0") == "1"
+DEV_SAMPLE_PCT = int(os.getenv("DEV_SAMPLE_PCT", "1"))
+DEV_LIMIT = int(os.getenv("DEV_LIMIT", "0"))
+
+PROD_CODEC = os.getenv("PROD_CODEC", "ZSTD")  # ZSTD / SNAPPY / GZIP / "" (none)
+THREADS = int(os.getenv("DUCKDB_THREADS", "8"))
+MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
+
 
 # Models
 
@@ -12,55 +45,74 @@ class PingResponse(BaseModel):
     timestamp: str
     latency_ms: float
 
-class GoldenRecord(BaseModel):
-    """Structure du Golden Record (SIRENE + RNA + BAN)"""
+class ErrorResponse(BaseModel):
+    """Format d'erreur standardisé selon l'énoncé"""
+    error: str
+    message: str
+
+# GET /siret/{siret} - Structure imbriquée selon énoncé
+class Identity(BaseModel):
     siret: str
-    siren: str
-    nom: str
+    nom_raison_sociale: str
     enseigne: Optional[str] = None
-    code_postal: str
-    numero_voie: Optional[str] = None
-    libelle_voie: Optional[str] = None
-    commune: str
-    
-    # RNA (si association)
+    categorie_entreprise: Optional[str] = None
+
+class AssoId(BaseModel):
     id_rna: Optional[str] = None
-    titre_association: Optional[str] = None
-    
-    # BAN (géolocalisation)
+    date_publication_jo: Optional[str] = None
+
+class Location(BaseModel):
+    numero_voie: Optional[str] = None
+    type_voie: Optional[str] = None
+    libelle_voie: Optional[str] = None
+    code_postal: str
+    commune: str
+    geo_score: Optional[float] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    geo_score: Optional[float] = None
-    
-    # Métadonnées
-    etat_administratif: str = "A"  # A=Actif, F=Fermé
-    date_creation: Optional[str] = None
-    date_maj: Optional[str] = None
 
+class GoldenRecord(BaseModel):
+    """Structure du Golden Record selon énoncé"""
+    identity: Identity
+    asso_id: AssoId
+    location: Location
+
+# GET /search - Structure selon énoncé
 class SearchResult(BaseModel):
-    """Résultat de recherche simplifié"""
     siret: str
-    nom: str
-    enseigne: Optional[str] = None
-    adresse: str
-    code_postal: str
-    commune: str
-    id_rna: Optional[str] = None
+    name: str
+    is_association: bool
+    city: str
 
 class SearchResponse(BaseModel):
     query: str
-    postal_code: Optional[str] = None
+    filter_dept: Optional[str] = None
     count: int
     results: List[SearchResult]
+
+# GET /stats/{code_postal} - Structure selon énoncé
+class Repartition(BaseModel):
+    entreprises_pures: int
+    associations: int
+    etablissements_fermes: int
+
+class TopNaf(BaseModel):
+    code: Optional[str] = None
+    libelle: Optional[str] = None
+    count: int
+
+class StatsResponse(BaseModel):
+    zone: str
+    total_entites: int
+    repartition: Repartition
+    top_naf: TopNaf
 
 # ==================== Application ====================
 
 app = FastAPI(
     title="Challenge ETL API",
-    description="API unifiée SIRENE + RNA + BAN avec données mockées",
+    description="API unifiée SIRENE + RNA + BAN",
     version="1.0.0",
-    docs_url="/api/v1/docs",
-    redoc_url="/api/v1/redoc"
 )
 
 # CORS pour le frontend React sur port 5173 (Vite)
@@ -77,64 +129,64 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==================== Données Mockées ====================
+# ==================== Startup / Shutdown ====================
 
-MOCK_ENTITIES = {
-    "77567227200020": {
-        "siret": "77567227200020",
-        "siren": "775672272",
-        "nom": "CROIX ROUGE FRANCAISE",
-        "enseigne": None,
-        "code_postal": "75015",
-        "numero_voie": "98",
-        "libelle_voie": "RUE DIDOT",
-        "commune": "PARIS 15",
-        "id_rna": "W751000022",
-        "titre_association": "CROIX ROUGE FRANCAISE",
-        "latitude": 48.8317,
-        "longitude": 2.3157,
-        "geo_score": 0.95,
-        "etat_administratif": "A",
-        "date_creation": "1945-05-08",
-        "date_maj": "2025-12-15"
-    },
-    "12345678901234": {
-        "siret": "12345678901234",
-        "siren": "123456789",
-        "nom": "ENTREPRISE DEMO SARL",
-        "enseigne": "DEMO SHOP",
-        "code_postal": "69001",
-        "numero_voie": "42",
-        "libelle_voie": "RUE DE LA PAIX",
-        "commune": "LYON 1ER",
-        "id_rna": None,
-        "titre_association": None,
-        "latitude": 45.7710,
-        "longitude": 4.8349,
-        "geo_score": 0.88,
-        "etat_administratif": "A",
-        "date_creation": "2010-03-15",
-        "date_maj": "2026-01-20"
-    },
-    "98765432109876": {
-        "siret": "98765432109876",
-        "siren": "987654321",
-        "nom": "ASSOCIATION SPORTIVE LOCALE",
-        "enseigne": "ASL SPORTS",
-        "code_postal": "33000",
-        "numero_voie": "15",
-        "libelle_voie": "AVENUE DES SPORTS",
-        "commune": "BORDEAUX",
-        "id_rna": "W331234567",
-        "titre_association": "ASSOCIATION SPORTIVE LOCALE",
-        "latitude": 44.8378,
-        "longitude": -0.5792,
-        "geo_score": 0.92,
-        "etat_administratif": "A",
-        "date_creation": "2018-09-10",
-        "date_maj": "2025-11-05"
-    }
-}
+@app.on_event("startup")
+async def startup_event():
+    """Initialisation au démarrage de l'API"""
+    global con, fts_con, stats_cache
+    
+    # Vérifier que catalog.db existe (avec les tables et index créés par views.py)
+    if not CATALOG_DB.exists():
+        raise FileNotFoundError(
+            f"Base DuckDB manquante : {CATALOG_DB}\n"
+            "Exécutez d'abord : python etl/views.py"
+        )
+    
+    # Connexion au catalog.db (tables et index déjà créés par views.py)
+    con = duckdb.connect(str(CATALOG_DB), read_only=True)
+    con.execute(f"SET threads = {THREADS}")
+    con.execute(f"SET memory_limit = '{MEMORY_LIMIT}'")
+    
+    print("✅ Connexion au catalog.db (avec index pré-construits)")
+    
+    # Vérifier que les tables existent
+    tables = con.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").fetchall()
+    table_names = [t[0] for t in tables]
+    
+    if 'search_view' not in table_names:
+        raise RuntimeError(
+            "Table search_view manquante dans catalog.db.\n"
+            "Ré-exécutez : python etl/views.py"
+        )
+    
+    # Connexion SQLite FTS5 pour recherche textuelle optimisée
+    if FTS_DB.exists():
+        import sqlite3
+        fts_con = sqlite3.connect(str(FTS_DB))
+        print("✅ Connexion à fts_search.db (index FTS5)")
+    else:
+        print("⚠️  fts_search.db absent - recherche textuelle sera plus lente")
+        fts_con = None
+    
+    # Charger stats_view en RAM (cache complet)
+    stats_df = con.execute("SELECT * FROM stats_view").df()
+    stats_cache = stats_df.set_index('code_postal').to_dict('index')
+    
+    print(f"✅ API démarrée")
+    print(f"  • Database      : {CATALOG_DB}")
+    print(f"  • FTS Index     : {'Activé' if fts_con else 'Désactivé'}")
+    print(f"  • Tables        : {', '.join(table_names)}")
+    print(f"  • Stats Cache   : {len(stats_cache)} codes postaux")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Nettoyage à l'arrêt de l'API"""
+    global con, fts_con
+    if con:
+        con.close()
+    if fts_con:
+        fts_con.close()
 
 # ==================== Endpoints ====================
 
@@ -165,7 +217,7 @@ async def ping():
     )
 
 
-@app.get("/api/v1/siret/{siret}", response_model=GoldenRecord, tags=["Entities"])
+@app.get("/api/v1/siret/{siret}", response_model=GoldenRecord, tags=["Entities"], responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}})
 async def get_siret(siret: str):
     """
     Récupération du Golden Record d'un établissement
@@ -174,9 +226,9 @@ async def get_siret(siret: str):
     - `siret` : 14 chiffres (SIREN 9 + NIC 5)
     
     **Retourne :**
-    - Données SIRENE (identité légale)
-    - Données RNA (si association)
-    - Données BAN (géolocalisation)
+    - identity : Données SIRENE (identité légale)
+    - asso_id : Données RNA (si association)
+    - location : Données BAN (géolocalisation)
     
     **Codes HTTP :**
     - 200 : Succès
@@ -185,32 +237,122 @@ async def get_siret(siret: str):
     """
     # Validation format SIRET
     if len(siret) != 14 or not siret.isdigit():
-        raise HTTPException(
+        return JSONResponse(
             status_code=400,
-            detail="SIRET invalide : doit contenir exactement 14 chiffres"
+            content={
+                "error": "INVALID_FORMAT",
+                "message": "Le siret doit contenir 14 chiffres."
+            }
         )
     
-    # Recherche dans les données mockées
-    if siret not in MOCK_ENTITIES:
-        raise HTTPException(
+    # Requête dans golden_record (table avec index dans catalog.db)
+    result = con.execute("""
+        SELECT 
+            siret,
+            siren,
+            nom,
+            enseigne,
+            code_postal,
+            num_voie,
+            type_voie,
+            libelle_voie,
+            ville,
+            id_rna,
+            latitude,
+            longitude,
+            geo_quality,
+            CAST(rna_date_creation AS VARCHAR) as date_creation,
+            status
+        FROM golden_record
+        WHERE siret = ?
+    """, [siret]).fetchone()
+    
+    if not result:
+        return JSONResponse(
             status_code=404,
-            detail=f"SIRET {siret} introuvable dans la base de données"
+            content={
+                "error": "SIRET_NOT_FOUND",
+                "message": f"Le siret {siret} est inconnu."
+            }
         )
     
-    return GoldenRecord(**MOCK_ENTITIES[siret])
+    # Extraction des valeurs
+    (siret_val, siren_val, nom, enseigne, code_postal, num_voie, type_voie,
+     libelle_voie, ville, id_rna, latitude, longitude, geo_quality, 
+     date_creation, status) = result
+    
+    # Calcul de categorie_entreprise (simplifié)
+    categorie = "PME"  # Par défaut, pourrait être enrichi avec effectifs
+    
+    # Construction de la réponse structurée
+    return GoldenRecord(
+        identity=Identity(
+            siret=siret_val,
+            nom_raison_sociale=nom or "[SANS NOM]",
+            enseigne=enseigne,
+            categorie_entreprise=categorie
+        ),
+        asso_id=AssoId(
+            id_rna=id_rna,
+            date_publication_jo=date_creation
+        ),
+        location=Location(
+            numero_voie=num_voie,
+            type_voie=type_voie,
+            libelle_voie=libelle_voie,
+            code_postal=code_postal,
+            commune=ville or "[COMMUNE INCONNUE]",
+            geo_score=round(geo_quality, 2) if geo_quality else None,
+            latitude=round(latitude, 4) if latitude else None,
+            longitude=round(longitude, 4) if longitude else None
+        )
+    )
 
 
-@app.get("/api/v1/search", response_model=SearchResponse, tags=["Search"])
+# ==================== Helpers ====================
+
+def escape_fts5(text: str) -> str:
+    """
+    Échappe les caractères spéciaux pour FTS5
+    
+    Caractères problématiques : " ' ( ) [ ] { } * : ^
+    
+    Args:
+        text: Texte à échapper
+    
+    Returns:
+        Texte nettoyé et sécurisé pour FTS5
+    
+    Examples:
+        >>> escape_fts5("VILLE D'AVRAY")
+        'VILLE D AVRAY'
+        >>> escape_fts5('ASSOCIATION "SECOURS" POPULAIRE')
+        'ASSOCIATION SECOURS POPULAIRE'
+    """
+    # Supprimer les caractères spéciaux FTS5
+    special_chars = ['"', "'", '(', ')', '[', ']', '{', '}', '*', ':', '^']
+    for char in special_chars:
+        text = text.replace(char, ' ')
+    
+    # Nettoyer les espaces multiples
+    text = ' '.join(text.split())
+    
+    return text
+
+
+# ==================== Endpoints ====================
+
+@app.get("/api/v1/search", response_model=SearchResponse, tags=["Search"], responses={400: {"model": ErrorResponse}})
 async def search(
     q: Optional[str] = Query(None, description="Texte à chercher (nom ou enseigne)"),
-    postal_code: Optional[str] = Query(None, description="Code postal (5 chiffres)")
+    dept: Optional[str] = Query(None, description="Code département (2 chiffres)")
 ):
     """
     Recherche géographique et textuelle
     
     **Paramètres :**
     - `q` : Texte libre (nom, enseigne, RNA)
-    - `postal_code` : Code postal exact (5 chiffres)
+    - `dept` : Code département (2 chiffres)
     
     **Retour :**
     - Maximum 10 résultats
@@ -220,97 +362,175 @@ async def search(
     - 200 : Succès (même si 0 résultat)
     - 400 : Paramètre invalide
     """
-    # Validation code postal
-    if postal_code and (len(postal_code) != 5 or not postal_code.isdigit()):
-        raise HTTPException(
+    # Validation département
+    if dept and (len(dept) not in [2, 3] or not dept.isdigit()):
+        return JSONResponse(
             status_code=400,
-            detail="Code postal invalide : doit contenir exactement 5 chiffres"
+            content={
+                "error": "INVALID_FORMAT",
+                "message": f"Le code département doit contenir 2 ou 3 chiffres (reçu: {dept})"
+            }
         )
     
-    # Filtrage des entités mockées
-    results = []
-    for entity_data in MOCK_ENTITIES.values():
-        # Filtre par code postal
-        if postal_code and entity_data["code_postal"] != postal_code:
-            continue
+    # STRATÉGIE OPTIMISÉE : FTS5 si recherche textuelle, sinon DuckDB
+    if q and fts_con:
+        # === RECHERCHE FTS5 (< 100ms) ===
+        cursor = fts_con.cursor()
         
-        # Filtre par texte (recherche dans nom et enseigne)
-        if q:
-            search_text = q.lower()
-            nom_match = search_text in entity_data["nom"].lower()
-            enseigne_match = (
-                entity_data["enseigne"] and 
-                search_text in entity_data["enseigne"].lower()
+        # Échapper les caractères spéciaux FTS5
+        q_escaped = escape_fts5(q)
+        
+        # Vérifier que la requête n'est pas vide après nettoyage
+        if not q_escaped.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "INVALID_FORMAT",
+                    "message": "Query invalide après nettoyage (caractères spéciaux uniquement)"
+                }
             )
-            
-            if not (nom_match or enseigne_match):
-                continue
         
-        # Construction du résultat
-        adresse = f"{entity_data['numero_voie'] or ''} {entity_data['libelle_voie'] or ''}".strip()
+        # Ajouter wildcards pour recherche partielle
+        fts_query = ' '.join([f'{word}*' for word in q_escaped.split()])
         
-        results.append(SearchResult(
-            siret=entity_data["siret"],
-            nom=entity_data["nom"],
-            enseigne=entity_data["enseigne"],
-            adresse=adresse,
-            code_postal=entity_data["code_postal"],
-            commune=entity_data["commune"],
-            id_rna=entity_data["id_rna"]
-        ))
+        # Construire la requête FTS avec filtre département
+        if dept:
+            cursor.execute("""
+                SELECT siret FROM search_fts 
+                WHERE search_fts MATCH ? AND code_postal LIKE ?
+                LIMIT 50
+            """, (fts_query, f"{dept}%"))
+        else:
+            cursor.execute("""
+                SELECT siret FROM search_fts 
+                WHERE search_fts MATCH ?
+                LIMIT 50
+            """, (fts_query,))
+        
+        # Récupérer les SIRETs matchés
+        sirets = [row[0] for row in cursor.fetchall()]
+        
+        if not sirets:
+            return SearchResponse(query=q, filter_dept=dept, count=0, results=[])
+        
+        # Enrichir avec les données DuckDB
+        placeholders = ','.join(['?' for _ in sirets])
+        results = con.execute(f"""
+            SELECT 
+                siret,
+                display_name as name,
+                COALESCE(ville, '') as city,
+                id_rna
+            FROM search_view
+            WHERE siret IN ({placeholders})
+            LIMIT 10
+        """, sirets).fetchall()
     
-    # Limitation à 10 résultats
-    results = results[:10]
+    else:
+        # === RECHERCHE DUCKDB CLASSIQUE (avec index) ===
+        where_clauses = []
+        params = []
+        
+        if dept:
+            where_clauses.append("code_postal LIKE ?")
+            params.append(f"{dept}%")
+        
+        if q:
+            where_clauses.append("search_text_lower LIKE ?")
+            search_pattern = f"%{q.lower()}%"
+            params.append(search_pattern)
+        
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        
+        results = con.execute(f"""
+            SELECT 
+                siret,
+                display_name as name,
+                COALESCE(ville, '') as city,
+                id_rna
+            FROM search_view
+            WHERE {where_sql}
+            LIMIT 10
+        """, params).fetchall()
+    
+    # Conversion en objets SearchResult
+    search_results = []
+    for row in results:
+        search_results.append(SearchResult(
+            siret=row[0],
+            name=row[1],
+            is_association=(row[3] is not None),
+            city=row[2]
+        ))
     
     return SearchResponse(
         query=q or "",
-        postal_code=postal_code,
-        count=len(results),
-        results=results
+        filter_dept=dept,
+        count=len(search_results),
+        results=search_results
     )
 
 
-@app.get("/api/v1/stats/{code_postal}", tags=["Statistics"])
+@app.get("/api/v1/stats/{code_postal}", response_model=StatsResponse, tags=["Statistics"], responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}})
 async def get_stats(code_postal: str):
     """
-    Statistiques par code postal (BONUS)
+    Statistiques par code postal
     
     **Paramètres :**
     - `code_postal` : Code postal (5 chiffres)
     
     **Retourne :**
-    - Nombre d'entreprises
-    - Nombre d'associations
-    - Top 5 des codes NAF
-    
-    **Note :** Endpoint optionnel pour bonus
+    - zone : Code postal
+    - total_entites : Nombre total d'établissements
+    - repartition : Détail entreprises/associations/fermés
+    - top_naf : Code NAF le plus fréquent avec libellé
     """
     if len(code_postal) != 5 or not code_postal.isdigit():
-        raise HTTPException(
+        return JSONResponse(
             status_code=400,
-            detail="Code postal invalide : doit contenir exactement 5 chiffres"
+            content={
+                "error": "INVALID_FORMAT",
+                "message": f"Le code postal doit contenir 5 chiffres (reçu: {code_postal})"
+            }
         )
     
-    # Statistiques mockées
-    nb_entreprises = len([
-        e for e in MOCK_ENTITIES.values()
-        if e["code_postal"] == code_postal and e["id_rna"] is None
-    ])
+    # Lookup O(1) dans le cache stats
+    if code_postal not in stats_cache:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "ZONE_NOT_FOUND",
+                "message": f"Le code postal {code_postal} est inconnu."
+            }
+        )
     
-    nb_associations = len([
-        e for e in MOCK_ENTITIES.values()
-        if e["code_postal"] == code_postal and e["id_rna"] is not None
-    ])
+    stats = stats_cache[code_postal]
     
-    return {
-        "code_postal": code_postal,
-        "nb_entreprises": nb_entreprises,
-        "nb_associations": nb_associations,
-        "top_naf": [
-            {"code": "8790B", "libelle": "Action sociale", "count": nb_associations},
-            {"code": "4711D", "libelle": "Supermarchés", "count": nb_entreprises}
-        ]
-    }
+    # Calcul de la répartition
+    total_entites = int(stats["total_entites"])
+    total_associations = int(stats["total_associations"])
+    total_fermes = int(stats.get("total_fermees", 0))  # Colonne = total_fermees dans stats_view
+    entreprises_pures = total_entites - total_associations
+    
+    # Mapping NAF code -> libellé (simplifié, devrait être enrichi avec table NAF)
+    naf_code = stats.get("top_naf_code")
+    naf_libelle = None  # Pourrait être enrichi avec une vraie table de référence NAF
+    
+    # Construction de la réponse structurée selon énoncé
+    return StatsResponse(
+        zone=code_postal,
+        total_entites=total_entites,
+        repartition=Repartition(
+            entreprises_pures=entreprises_pures,
+            associations=total_associations,
+            etablissements_fermes=total_fermes
+        ),
+        top_naf=TopNaf(
+            code=naf_code,
+            libelle=naf_libelle,
+            count=int(stats.get("top_naf_count", 0)) if stats.get("top_naf_count") else 0
+        )
+    )
 
 
 # ==================== Point d'entrée ====================
