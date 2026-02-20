@@ -1,6 +1,5 @@
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -133,12 +132,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ==================== Frontend Statique ====================
-
-# Monter le dossier dist/ pour servir les assets (JS, CSS, images)
-if STATIC_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
 
 # ==================== Startup / Shutdown ====================
 
@@ -619,38 +612,6 @@ async def get_stats(code_postal: str):
         )
     )
 
-
-# ==================== Routes Frontend ====================
-
-@app.get("/", include_in_schema=False)
-async def serve_frontend():
-    """Serve the frontend index.html at root"""
-    index_path = STATIC_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path)
-    return {"message": "Frontend not built. Run 'npm run build' in front-5dc/"}
-
-@app.get("/{full_path:path}", include_in_schema=False)
-async def catch_all(full_path: str):
-    """
-    Catch-all route for SPA routing.
-    Try to serve the file if it exists, otherwise return index.html.
-    """
-    # Ignorer les routes API
-    if full_path.startswith("api/"):
-        raise HTTPException(status_code=404, detail="API endpoint not found")
-    
-    # Chercher le fichier demandé
-    file_path = STATIC_DIR / full_path
-    if file_path.exists() and file_path.is_file():
-        return FileResponse(file_path)
-    
-    # Fallback to index.html for SPA routing (React Router)
-    index_path = STATIC_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path)
-    
-    return {"message": "Frontend not found"}
 
 # ==================== Point d'entrée ====================
 
