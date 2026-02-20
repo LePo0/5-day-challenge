@@ -29,6 +29,8 @@ STATS_VIEW = DATA_DIR / "stats_view.parquet"
 con = None  # DuckDB
 fts_con = None  # SQLite FTS5
 stats_cache = {}  # Cache des stats en RAM
+search_cache = {}  # Cache des recherches en RAM (clé: q+dept)
+siret_cache = {}  # Cache des fiches siret en RAM
 
 # ---------------------------
 # MODE DEV / PROD
@@ -40,6 +42,10 @@ DEV_LIMIT = int(os.getenv("DEV_LIMIT", "0"))
 PROD_CODEC = os.getenv("PROD_CODEC", "ZSTD")  # ZSTD / SNAPPY / GZIP / "" (none)
 THREADS = int(os.getenv("DUCKDB_THREADS", "8"))
 MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
+SEARCH_CACHE_TTL_SEC = int(os.getenv("SEARCH_CACHE_TTL_SEC", "120"))
+SEARCH_CACHE_MAX_ENTRIES = int(os.getenv("SEARCH_CACHE_MAX_ENTRIES", "5000"))
+SIRET_CACHE_TTL_SEC = int(os.getenv("SIRET_CACHE_TTL_SEC", "300"))
+SIRET_CACHE_MAX_ENTRIES = int(os.getenv("SIRET_CACHE_MAX_ENTRIES", "100000"))
 
 
 # Models
@@ -139,7 +145,7 @@ if STATIC_DIR.exists():
 @app.on_event("startup")
 async def startup_event():
     """Initialisation au démarrage de l'API"""
-    global con, fts_con, stats_cache
+    global con, fts_con, stats_cache, search_cache, siret_cache
     
     # Vérifier que catalog.db existe (avec les tables et index créés par views.py)
     if not CATALOG_DB.exists():
@@ -177,12 +183,16 @@ async def startup_event():
     # Charger stats_view en RAM (cache complet)
     stats_df = con.execute("SELECT * FROM stats_view").df()
     stats_cache = stats_df.set_index('code_postal').to_dict('index')
+    search_cache = {}
+    siret_cache = {}
     
     print(f"✅ API démarrée")
     print(f"  • Database      : {CATALOG_DB}")
     print(f"  • FTS Index     : {'Activé' if fts_con else 'Désactivé'}")
     print(f"  • Tables        : {', '.join(table_names)}")
     print(f"  • Stats Cache   : {len(stats_cache)} codes postaux")
+    print(f"  • Search Cache  : TTL={SEARCH_CACHE_TTL_SEC}s, max={SEARCH_CACHE_MAX_ENTRIES}")
+    print(f"  • SIRET Cache   : TTL={SIRET_CACHE_TTL_SEC}s, max={SIRET_CACHE_MAX_ENTRIES}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -249,6 +259,11 @@ async def get_siret(siret: str):
                 "message": "Le siret doit contenir 14 chiffres."
             }
         )
+
+    cache_key = siret_cache_key(siret)
+    cached_payload = siret_cache_get(cache_key)
+    if cached_payload is not None:
+        return GoldenRecord(**cached_payload)
     
     # Requête dans golden_record (table avec index dans catalog.db)
     result = con.execute("""
@@ -290,7 +305,7 @@ async def get_siret(siret: str):
     categorie = "PME"  # Par défaut, pourrait être enrichi avec effectifs
     
     # Construction de la réponse structurée
-    return GoldenRecord(
+    response = GoldenRecord(
         identity=Identity(
             siret=siret_val,
             nom_raison_sociale=nom or "[SANS NOM]",
@@ -312,6 +327,8 @@ async def get_siret(siret: str):
             longitude=round(longitude, 4) if longitude else None
         )
     )
+    siret_cache_set(cache_key, response.model_dump())
+    return response
 
 
 # ==================== Helpers ====================
@@ -345,6 +362,62 @@ def escape_fts5(text: str) -> str:
     return text
 
 
+def search_cache_key(q: Optional[str], dept: Optional[str]) -> str:
+    q_norm = (q or "").strip().lower()
+    dept_norm = (dept or "").strip()
+    return f"q={q_norm}|dept={dept_norm}"
+
+
+def search_cache_get(key: str):
+    now = time.time()
+    item = search_cache.get(key)
+    if not item:
+        return None
+    ts, payload = item
+    if now - ts > SEARCH_CACHE_TTL_SEC:
+        search_cache.pop(key, None)
+        return None
+    return payload
+
+
+def search_cache_set(key: str, payload: dict) -> None:
+    if SEARCH_CACHE_MAX_ENTRIES <= 0:
+        return
+    now = time.time()
+    search_cache[key] = (now, payload)
+
+    if len(search_cache) > SEARCH_CACHE_MAX_ENTRIES:
+        oldest_key = min(search_cache.items(), key=lambda kv: kv[1][0])[0]
+        search_cache.pop(oldest_key, None)
+
+
+def siret_cache_key(siret: str) -> str:
+    return (siret or "").strip()
+
+
+def siret_cache_get(key: str):
+    now = time.time()
+    item = siret_cache.get(key)
+    if not item:
+        return None
+    ts, payload = item
+    if now - ts > SIRET_CACHE_TTL_SEC:
+        siret_cache.pop(key, None)
+        return None
+    return payload
+
+
+def siret_cache_set(key: str, payload: dict) -> None:
+    if SIRET_CACHE_MAX_ENTRIES <= 0:
+        return
+    now = time.time()
+    siret_cache[key] = (now, payload)
+
+    if len(siret_cache) > SIRET_CACHE_MAX_ENTRIES:
+        oldest_key = min(siret_cache.items(), key=lambda kv: kv[1][0])[0]
+        siret_cache.pop(oldest_key, None)
+
+
 # ==================== Endpoints ====================
 
 @app.get("/api/v1/search", response_model=SearchResponse, tags=["Search"], responses={400: {"model": ErrorResponse}})
@@ -376,6 +449,11 @@ async def search(
                 "message": f"Le code département doit contenir 2 ou 3 chiffres (reçu: {dept})"
             }
         )
+
+    cache_key = search_cache_key(q, dept)
+    cached_payload = search_cache_get(cache_key)
+    if cached_payload is not None:
+        return SearchResponse(**cached_payload)
     
     # STRATÉGIE OPTIMISÉE : FTS5 si recherche textuelle, sinon DuckDB
     if q and fts_con:
@@ -416,7 +494,9 @@ async def search(
         sirets = [row[0] for row in cursor.fetchall()]
         
         if not sirets:
-            return SearchResponse(query=q, filter_dept=dept, count=0, results=[])
+            response = SearchResponse(query=q or "", filter_dept=dept, count=0, results=[])
+            search_cache_set(cache_key, response.model_dump())
+            return response
         
         # Enrichir avec les données DuckDB
         placeholders = ','.join(['?' for _ in sirets])
@@ -468,12 +548,14 @@ async def search(
             city=row[2]
         ))
     
-    return SearchResponse(
+    response = SearchResponse(
         query=q or "",
         filter_dept=dept,
         count=len(search_results),
         results=search_results
     )
+    search_cache_set(cache_key, response.model_dump())
+    return response
 
 
 @app.get("/api/v1/stats/{code_postal}", response_model=StatsResponse, tags=["Statistics"], responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}})
